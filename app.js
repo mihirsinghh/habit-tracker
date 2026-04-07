@@ -6,14 +6,33 @@ const HISTORY_DAY_LABELS = [
   { label: "Fri", row: 5 }
 ];
 
-const state = loadState();
+const state = {
+  authReady: false,
+  configured: true,
+  habits: [],
+  session: null,
+  supabase: null,
+  user: null
+};
 const uiState = {
   editingHabitId: null,
+  isBusy: false,
   selectedHabitId: null,
   selectedYear: null
 };
 
 const elements = {
+  authEmail: document.querySelector("#auth-email"),
+  authForm: document.querySelector("#auth-form"),
+  authMessage: document.querySelector("#auth-message"),
+  authPassword: document.querySelector("#auth-password"),
+  authSetup: document.querySelector("#auth-setup"),
+  authSignInBtn: document.querySelector("#auth-sign-in-btn"),
+  authSignOutBtn: document.querySelector("#auth-sign-out-btn"),
+  authSignUpBtn: document.querySelector("#auth-sign-up-btn"),
+  authSignedIn: document.querySelector("#auth-signed-in"),
+  authSignedOut: document.querySelector("#auth-signed-out"),
+  authUserEmail: document.querySelector("#auth-user-email"),
   habitForm: document.querySelector("#habit-form"),
   habitFormTitle: document.querySelector("#habit-form-title"),
   habitSubmitBtn: document.querySelector("#habit-submit-btn"),
@@ -30,16 +49,20 @@ const elements = {
 
 initialize();
 
-function initialize() {
+async function initialize() {
   elements.logDate.value = formatDateKey(new Date());
 
   registerServiceWorker();
+  elements.authForm.addEventListener("submit", handleSignIn);
+  elements.authSignUpBtn.addEventListener("click", handleSignUp);
+  elements.authSignOutBtn.addEventListener("click", handleSignOut);
   elements.habitForm.addEventListener("submit", handleHabitSubmit);
   elements.habitCancelBtn.addEventListener("click", resetHabitForm);
   elements.logForm.addEventListener("submit", handleLogSubmit);
   elements.logHabit.addEventListener("change", renderLogSummary);
   elements.logDate.addEventListener("change", renderLogSummary);
 
+  await setupSupabase();
   render();
 }
 
@@ -53,109 +76,154 @@ function registerServiceWorker() {
   });
 }
 
-function loadState() {
-  const emptyState = { habits: [] };
+async function setupSupabase() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return emptyState;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed.habits)) return emptyState;
-    return parsed;
-  } catch (error) {
-    console.warn("Unable to load habit tracker state.", error);
-    return emptyState;
-  }
-}
-
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function handleHabitSubmit(event) {
-  event.preventDefault();
-  const formData = new FormData(event.currentTarget);
-  const habitData = {
-    name: String(formData.get("name")).trim(),
-    emoji: String(formData.get("emoji")).trim() || "\u2728",
-    description: String(formData.get("description")).trim(),
-    frequency: String(formData.get("frequency")),
-    metric: sanitizeMetric(formData.get("metric")),
-    target: clampNumber(Number(formData.get("target")), 1, 31)
-  };
-
-  if (uiState.editingHabitId) {
-    const habit = findHabit(uiState.editingHabitId);
-    if (!habit) {
-      resetHabitForm();
-      render();
+    const response = await fetch("./api/config", { cache: "no-store" });
+    const config = await response.json();
+    if (!config.configured) {
+      state.configured = false;
+      state.authReady = true;
       return;
     }
 
-    const shouldContinue = window.confirm(
-      "Editing this habit will permanently delete all of its historical data. Do you want to continue?"
-    );
-    if (!shouldContinue) return;
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+    state.supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
 
-    Object.assign(habit, habitData, { logs: {} });
-    uiState.selectedHabitId = habit.id;
-    uiState.selectedYear = getDefaultHistoryYear(habit);
-    saveState();
+    const { data, error } = await state.supabase.auth.getSession();
+    if (error) throw error;
+    applySession(data.session);
+
+    state.supabase.auth.onAuthStateChange(async (_event, session) => {
+      applySession(session);
+      await refreshHabits();
+      render();
+    });
+
+    await refreshHabits();
+  } catch (error) {
+    console.warn("Unable to initialize auth.", error);
+    state.configured = false;
+  } finally {
+    state.authReady = true;
+  }
+}
+
+function applySession(session) {
+  state.session = session;
+  state.user = session?.user ?? null;
+}
+
+async function handleSignIn(event) {
+  event.preventDefault();
+  if (!state.supabase) return;
+
+  try {
+    setBusy(true);
+    setAuthMessage("");
+    const email = elements.authEmail.value.trim();
+    const password = elements.authPassword.value;
+    const { error } = await state.supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      setAuthMessage(error.message, "error");
+      return;
+    }
+
+    elements.authForm.reset();
+    setAuthMessage("Signed in successfully.");
+  } catch (error) {
+    setAuthMessage(error.message || "Unable to sign in.", "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleSignUp() {
+  if (!state.supabase) return;
+
+  try {
+    setBusy(true);
+    setAuthMessage("");
+    const email = elements.authEmail.value.trim();
+    const password = elements.authPassword.value;
+    const { error } = await state.supabase.auth.signUp({ email, password });
+
+    if (error) {
+      setAuthMessage(error.message, "error");
+      return;
+    }
+
+    setAuthMessage("Account created. Check your email if confirmation is required, then sign in.");
+  } catch (error) {
+    setAuthMessage(error.message || "Unable to create account.", "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleSignOut() {
+  if (!state.supabase) return;
+
+  try {
+    setBusy(true);
+    await state.supabase.auth.signOut();
+    state.habits = [];
+    uiState.selectedHabitId = null;
+    uiState.selectedYear = null;
     resetHabitForm();
+    setAuthMessage("Signed out.");
     render();
+  } catch (error) {
+    setAuthMessage(error.message || "Unable to sign out.", "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function refreshHabits() {
+  if (!state.supabase || !state.user) {
+    state.habits = [];
     return;
   }
 
-  const habit = {
-    id: crypto.randomUUID(),
-    ...habitData,
-    createdAt: new Date().toISOString(),
-    logs: {}
-  };
-
-  state.habits.unshift(habit);
-  saveState();
-  event.currentTarget.reset();
-  document.querySelector("#habit-target").value = 1;
-  elements.logDate.value = formatDateKey(new Date());
-  render();
-}
-
-function handleLogSubmit(event) {
-  event.preventDefault();
-  const formData = new FormData(event.currentTarget);
-  const habit = findHabit(String(formData.get("habitId")));
-  if (!habit) return;
-
-  const date = String(formData.get("date"));
-  const count = clampNumber(Number(formData.get("count")), 0, 99);
-
-  if (count === 0) {
-    delete habit.logs[date];
-  } else {
-    habit.logs[date] = count;
+  const { data: habitsData, error: habitsError } = await state.supabase
+    .from("habits")
+    .select("id,name,emoji,description,frequency,metric,target,created_at")
+    .order("created_at", { ascending: false });
+  if (habitsError) {
+    setAuthMessage(habitsError.message);
+    return;
   }
 
-  saveState();
+  const { data: logsData, error: logsError } = await state.supabase
+    .from("habit_logs")
+    .select("habit_id,date,count");
+  if (logsError) {
+    setAuthMessage(logsError.message);
+    return;
+  }
+
+  const logsByHabitId = new Map();
+  logsData.forEach((entry) => {
+    const logs = logsByHabitId.get(entry.habit_id) ?? {};
+    logs[entry.date] = entry.count;
+    logsByHabitId.set(entry.habit_id, logs);
+  });
+
+  state.habits = habitsData.map((habit) => ({
+    id: habit.id,
+    name: habit.name,
+    emoji: habit.emoji,
+    description: habit.description,
+    frequency: habit.frequency,
+    metric: habit.metric,
+    target: habit.target,
+    createdAt: habit.created_at,
+    logs: logsByHabitId.get(habit.id) ?? {}
+  }));
+
+  await importLocalHabitsIfNeeded();
   syncSelection();
-  render();
-}
-
-function deleteHabit(habitId) {
-  const index = state.habits.findIndex((habit) => habit.id === habitId);
-  if (index === -1) return;
-
-  state.habits.splice(index, 1);
-  if (uiState.editingHabitId === habitId) {
-    resetHabitForm();
-  }
-  if (uiState.selectedHabitId === habitId) {
-    uiState.selectedHabitId = null;
-    uiState.selectedYear = null;
-  }
-
-  saveState();
-  syncSelection();
-  render();
 }
 
 function startEditingHabit(habitId) {
@@ -171,6 +239,70 @@ function startEditingHabit(habitId) {
   document.querySelector("#habit-metric").value = readableMetricUnit(habit.metric);
   renderHabitFormState();
   elements.habitForm.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function importLocalHabitsIfNeeded() {
+  const localState = loadLocalState();
+  if (state.habits.length > 0 || localState.habits.length === 0 || !state.supabase || !state.user) {
+    return;
+  }
+
+  const importedHabits = localState.habits.map((habit) => ({
+    user_id: state.user.id,
+    name: habit.name,
+    emoji: habit.emoji,
+    description: habit.description,
+    frequency: habit.frequency,
+    metric: sanitizeMetric(habit.metric),
+    target: habit.target,
+    created_at: habit.createdAt ?? new Date().toISOString()
+  }));
+
+  const { data: createdHabits, error: habitsError } = await state.supabase
+    .from("habits")
+    .insert(importedHabits)
+    .select("id");
+  if (habitsError) {
+    setAuthMessage(`Imported local data failed: ${habitsError.message}`);
+    return;
+  }
+
+  const logRows = [];
+  createdHabits.forEach((createdHabit, index) => {
+    const originalHabit = localState.habits[index];
+    Object.entries(originalHabit.logs ?? {}).forEach(([date, count]) => {
+      logRows.push({
+        user_id: state.user.id,
+        habit_id: createdHabit.id,
+        date,
+        count
+      });
+    });
+  });
+
+  if (logRows.length > 0) {
+    const { error: logsError } = await state.supabase.from("habit_logs").insert(logRows);
+    if (logsError) {
+      setAuthMessage(`Imported local logs failed: ${logsError.message}`);
+      return;
+    }
+  }
+
+  localStorage.removeItem(STORAGE_KEY);
+  await refreshHabits();
+}
+
+function loadLocalState() {
+  const emptyState = { habits: [] };
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return emptyState;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed.habits)) return emptyState;
+    return parsed;
+  } catch (_error) {
+    return emptyState;
+  }
 }
 
 function resetHabitForm() {
@@ -216,8 +348,164 @@ function syncSelection() {
   }
 }
 
+async function handleHabitSubmit(event) {
+  event.preventDefault();
+  if (!state.supabase || !state.user) {
+    setAuthMessage("Sign in before adding habits.", "error");
+    return;
+  }
+
+  try {
+    const formData = new FormData(event.currentTarget);
+    const habitData = {
+      name: String(formData.get("name")).trim(),
+      emoji: String(formData.get("emoji")).trim() || "\u2728",
+      description: String(formData.get("description")).trim(),
+      frequency: String(formData.get("frequency")),
+      metric: sanitizeMetric(formData.get("metric")),
+      target: clampNumber(Number(formData.get("target")), 1, 31)
+    };
+
+    setBusy(true);
+    setAuthMessage("");
+
+    if (uiState.editingHabitId) {
+      const habit = findHabit(uiState.editingHabitId);
+      if (!habit) {
+        resetHabitForm();
+        render();
+        return;
+      }
+
+      const shouldContinue = window.confirm(
+        "Editing this habit will permanently delete all of its historical data. Do you want to continue?"
+      );
+      if (!shouldContinue) return;
+
+      const { error: updateError } = await state.supabase
+        .from("habits")
+        .update(habitData)
+        .eq("id", habit.id);
+      if (updateError) {
+        setAuthMessage(updateError.message, "error");
+        return;
+      }
+
+      const { error: deleteLogsError } = await state.supabase
+        .from("habit_logs")
+        .delete()
+        .eq("habit_id", habit.id);
+      if (deleteLogsError) {
+        setAuthMessage(deleteLogsError.message, "error");
+        return;
+      }
+
+      uiState.selectedHabitId = habit.id;
+      resetHabitForm();
+    } else {
+      const { error } = await state.supabase.from("habits").insert({
+        user_id: state.user.id,
+        ...habitData
+      });
+      if (error) {
+        setAuthMessage(error.message, "error");
+        return;
+      }
+
+      event.currentTarget.reset();
+      document.querySelector("#habit-target").value = 1;
+      document.querySelector("#habit-metric").value = "times";
+    }
+
+    elements.logDate.value = formatDateKey(new Date());
+    await refreshHabits();
+    render();
+  } catch (error) {
+    setAuthMessage(error.message || "Unable to save habit.", "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function handleLogSubmit(event) {
+  event.preventDefault();
+  if (!state.supabase || !state.user) {
+    setAuthMessage("Sign in before logging activity.", "error");
+    return;
+  }
+
+  try {
+    const formData = new FormData(event.currentTarget);
+    const habit = findHabit(String(formData.get("habitId")));
+    if (!habit) return;
+
+    const date = String(formData.get("date"));
+    const count = clampNumber(Number(formData.get("count")), 0, 99);
+
+    setBusy(true);
+    setAuthMessage("");
+
+    if (count === 0) {
+      const { error } = await state.supabase
+        .from("habit_logs")
+        .delete()
+        .eq("habit_id", habit.id)
+        .eq("date", date);
+      if (error) {
+        setAuthMessage(error.message, "error");
+        return;
+      }
+    } else {
+      const { error } = await state.supabase
+        .from("habit_logs")
+        .upsert([{ user_id: state.user.id, habit_id: habit.id, date, count }], { onConflict: "habit_id,date" });
+      if (error) {
+        setAuthMessage(error.message, "error");
+        return;
+      }
+    }
+
+    await refreshHabits();
+    render();
+  } catch (error) {
+    setAuthMessage(error.message || "Unable to save log.", "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function deleteHabit(habitId) {
+  if (!state.supabase) return;
+
+  try {
+    setBusy(true);
+    setAuthMessage("");
+    const { error } = await state.supabase.from("habits").delete().eq("id", habitId);
+    if (error) {
+      setAuthMessage(error.message, "error");
+      return;
+    }
+
+    if (uiState.editingHabitId === habitId) {
+      resetHabitForm();
+    }
+    if (uiState.selectedHabitId === habitId) {
+      uiState.selectedHabitId = null;
+      uiState.selectedYear = null;
+    }
+
+    await refreshHabits();
+    render();
+  } catch (error) {
+    setAuthMessage(error.message || "Unable to delete habit.", "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
 function render() {
   syncSelection();
+  renderAuthState();
   renderHabitFormState();
   renderHabitOptions();
   renderDashboard();
@@ -225,14 +513,42 @@ function render() {
   renderLogSummary();
 }
 
+function renderAuthState() {
+  const signedIn = Boolean(state.user);
+  elements.authSetup.classList.toggle("hidden", state.configured);
+  elements.authSignedOut.classList.toggle("hidden", signedIn || !state.configured);
+  elements.authSignedIn.classList.toggle("hidden", !signedIn);
+  elements.authUserEmail.textContent = state.user?.email ?? "";
+
+  elements.authEmail.disabled = uiState.isBusy || !state.configured;
+  elements.authPassword.disabled = uiState.isBusy || !state.configured;
+  elements.authSignInBtn.disabled = uiState.isBusy || !state.configured;
+  elements.authSignUpBtn.disabled = uiState.isBusy || !state.configured;
+  elements.authSignOutBtn.disabled = uiState.isBusy || !signedIn;
+}
+
 function renderHabitFormState() {
+  const enabled = Boolean(state.user);
   const isEditing = Boolean(uiState.editingHabitId);
   elements.habitFormTitle.textContent = isEditing ? "Edit a habit" : "Create a habit";
   elements.habitSubmitBtn.textContent = isEditing ? "Save changes" : "Add habit";
   elements.habitCancelBtn.classList.toggle("hidden", !isEditing);
+
+  Array.from(elements.habitForm.elements).forEach((field) => {
+    if (field instanceof HTMLElement) {
+      field.toggleAttribute("disabled", !enabled || uiState.isBusy);
+    }
+  });
 }
 
 function renderHabitOptions() {
+  if (!state.user) {
+    elements.logHabit.innerHTML = '<option value="">Sign in first</option>';
+    elements.logHabit.disabled = true;
+    elements.logCount.disabled = true;
+    return;
+  }
+
   if (state.habits.length === 0) {
     elements.logHabit.innerHTML = '<option value="">No habits yet</option>';
     elements.logHabit.disabled = true;
@@ -241,8 +557,8 @@ function renderHabitOptions() {
   }
 
   const currentValue = elements.logHabit.value;
-  elements.logHabit.disabled = false;
-  elements.logCount.disabled = false;
+  elements.logHabit.disabled = uiState.isBusy;
+  elements.logCount.disabled = uiState.isBusy;
   elements.logHabit.innerHTML = state.habits
     .map(
       (habit) => `
@@ -259,6 +575,15 @@ function renderHabitOptions() {
 }
 
 function renderDashboard() {
+  if (!state.user) {
+    elements.dashboard.innerHTML = `
+      <div class="empty-state log-summary">
+        Sign in to view synced habits and streaks across devices.
+      </div>
+    `;
+    return;
+  }
+
   if (state.habits.length === 0) {
     elements.dashboard.innerHTML = `
       <div class="empty-state log-summary">
@@ -324,9 +649,9 @@ function renderDashboard() {
   });
 
   elements.dashboard.querySelectorAll("[data-delete-habit]").forEach((button) => {
-    button.addEventListener("click", (event) => {
+    button.addEventListener("click", async (event) => {
       event.stopPropagation();
-      deleteHabit(button.dataset.deleteHabit);
+      await deleteHabit(button.dataset.deleteHabit);
     });
   });
 
@@ -343,7 +668,7 @@ function renderDashboard() {
 
 function renderHabitHistory() {
   const habit = findHabit(uiState.selectedHabitId);
-  const isVisible = Boolean(habit);
+  const isVisible = Boolean(habit && state.user);
   elements.historyPanel.classList.toggle("hidden", !isVisible);
   if (!habit) {
     elements.habitHistory.innerHTML = "";
@@ -433,6 +758,11 @@ function renderHabitHistory() {
 }
 
 function renderLogSummary() {
+  if (!state.user) {
+    elements.logSummary.textContent = "Sign in to start logging activity.";
+    return;
+  }
+
   const habit = findHabit(elements.logHabit.value);
   if (!habit) {
     elements.logSummary.textContent = "Add a habit to start logging activity.";
@@ -448,6 +778,17 @@ function renderLogSummary() {
     Target: ${habit.target} ${readableMetricUnit(habit.metric)}.
     Set count to 0 to clear that day.
   `;
+}
+
+function setAuthMessage(message, tone = "info") {
+  elements.authMessage.textContent = message;
+  elements.authMessage.classList.toggle("hidden", !message);
+  elements.authMessage.dataset.tone = tone;
+}
+
+function setBusy(isBusy) {
+  uiState.isBusy = isBusy;
+  render();
 }
 
 function getHabitStats(habit) {

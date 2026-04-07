@@ -21,6 +21,53 @@
       </div>
     </header>
 
+    <section class="panel auth-panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Sync</p>
+          <h2>Account</h2>
+        </div>
+      </div>
+
+      <div id="auth-setup" class="log-summary hidden">
+        Add `SUPABASE_URL` and `SUPABASE_ANON_KEY` to Vercel to enable sign-in and cloud sync.
+      </div>
+
+      <div id="auth-signed-out">
+        <p class="auth-copy">Sign in to sync habits across devices.</p>
+        <form id="auth-form" class="auth-form">
+          <div class="split">
+            <label>
+              <span>Email</span>
+              <input id="auth-email" name="email" type="email" autocomplete="email" required>
+            </label>
+
+            <label>
+              <span>Password</span>
+              <input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="8" required>
+            </label>
+          </div>
+
+          <div class="form-actions">
+            <button id="auth-sign-in-btn" type="submit" class="primary-btn">Sign in</button>
+            <button id="auth-sign-up-btn" type="button" class="ghost-btn">Create account</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="auth-signed-in" class="hidden">
+        <div class="auth-status-row">
+          <div>
+            <p class="auth-copy">Signed in as <strong id="auth-user-email"></strong></p>
+            <p class="auth-copy muted-copy">Your habits now sync through the cloud.</p>
+          </div>
+          <button id="auth-sign-out-btn" type="button" class="ghost-btn">Sign out</button>
+        </div>
+      </div>
+
+      <div id="auth-message" class="log-summary hidden"></div>
+    </section>
+
     <main class="layout">
       <section class="panel">
         <div class="panel-header">
@@ -123,7 +170,7 @@
         </form>
 
         <div id="log-summary" class="log-summary empty-state">
-          Add a habit to start logging activity.
+          Sign in to start logging activity.
         </div>
       </section>
     </main>
@@ -149,6 +196,6 @@
     </section>
   </div>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
