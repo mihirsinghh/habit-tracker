@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Habit Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <div>
+        <h1>Habit Tracker</h1>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">New Habit</p>
+            <h2>Create a habit</h2>
+          </div>
+        </div>
+
+        <form id="habit-form" class="habit-form">
+          <label>
+            <span>Name</span>
+            <input id="habit-name" name="name" type="text" maxlength="40" placeholder="Morning walk" required>
+          </label>
+
+          <div class="split">
+            <label>
+              <span>Emoji</span>
+              <input id="habit-emoji" name="emoji" type="text" maxlength="2" placeholder="🚶">
+            </label>
+          </div>
+
+          <label>
+            <span>Description</span>
+            <textarea id="habit-description" name="description" rows="3" maxlength="160" placeholder="A quick 20 minute walk before work."></textarea>
+          </label>
+
+          <div class="split">
+            <label>
+              <span>Frequency</span>
+              <select id="habit-frequency" name="frequency">
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="custom">Custom target</option>
+              </select>
+            </label>
+
+            <label>
+              <span>Target count</span>
+              <input id="habit-target" name="target" type="number" min="1" max="31" value="1" required>
+            </label>
+          </div>
+
+          <label>
+            <span>Metric</span>
+            <select id="habit-metric" name="metric">
+              <option value="times-per-day">Times per day</option>
+              <option value="days-per-week">Days per week</option>
+              <option value="times-per-week">Times per week</option>
+            </select>
+          </label>
+
+          <button type="submit" class="primary-btn">Add habit</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">History</p>
+            <h2>Log a day</h2>
+          </div>
+        </div>
+
+        <form id="log-form" class="log-form">
+          <label>
+            <span>Habit</span>
+            <select id="log-habit" name="habitId"></select>
+          </label>
+
+          <div class="split">
+            <label>
+              <span>Date</span>
+              <input id="log-date" name="date" type="date" required>
+            </label>
+
+            <label>
+              <span>Count</span>
+              <input id="log-count" name="count" type="number" min="0" max="99" value="1" required>
+            </label>
+          </div>
+
+          <button type="submit" class="secondary-btn">Save log</button>
+        </form>
+
+        <div id="log-summary" class="log-summary empty-state">
+          Add a habit to start logging activity.
+        </div>
+      </section>
+    </main>
+
+    <section class="panel dashboard-panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Dashboard</p>
+          <h2>Streaks and recent momentum</h2>
+        </div>
+      </div>
+      <div id="dashboard" class="dashboard-grid"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Habits</p>
+          <h2>Your tracker</h2>
+        </div>
+      </div>
+      <div id="habit-list" class="habit-list"></div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
