@@ -400,25 +400,36 @@ async function handleHabitSubmit(event) {
         return;
       }
 
+      Object.assign(habit, habitData, { logs: {} });
       uiState.selectedHabitId = habit.id;
       resetHabitForm();
     } else {
-      const { error } = await state.supabase.from("habits").insert({
-        user_id: state.user.id,
-        ...habitData
-      });
+      const { data, error } = await state.supabase
+        .from("habits")
+        .insert({
+          user_id: state.user.id,
+          ...habitData
+        })
+        .select("id, created_at")
+        .single();
       if (error) {
         setAuthMessage(error.message, "error");
         return;
       }
 
+      state.habits.unshift({
+        id: data.id,
+        ...habitData,
+        createdAt: data.created_at,
+        logs: {}
+      });
       event.currentTarget.reset();
       document.querySelector("#habit-target").value = 1;
       document.querySelector("#habit-metric").value = "times";
     }
 
     elements.logDate.value = formatDateKey(new Date());
-    await refreshHabits();
+    syncSelection();
     render();
   } catch (error) {
     setAuthMessage(error.message || "Unable to save habit.", "error");
@@ -455,6 +466,8 @@ async function handleLogSubmit(event) {
         setAuthMessage(error.message, "error");
         return;
       }
+
+      delete habit.logs[date];
     } else {
       const { error } = await state.supabase
         .from("habit_logs")
@@ -463,9 +476,10 @@ async function handleLogSubmit(event) {
         setAuthMessage(error.message, "error");
         return;
       }
+
+      habit.logs[date] = count;
     }
 
-    await refreshHabits();
     render();
   } catch (error) {
     setAuthMessage(error.message || "Unable to save log.", "error");
@@ -494,7 +508,7 @@ async function deleteHabit(habitId) {
       uiState.selectedYear = null;
     }
 
-    await refreshHabits();
+    state.habits = state.habits.filter((habit) => habit.id !== habitId);
     render();
   } catch (error) {
     setAuthMessage(error.message || "Unable to delete habit.", "error");
