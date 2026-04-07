@@ -4,6 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Habit Tracker</title>
+  <meta name="theme-color" content="#b8643d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Habit Tracker">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icons/icon-192.svg">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -19,7 +26,7 @@
         <div class="panel-header">
           <div>
             <p class="eyebrow">New Habit</p>
-            <h2>Create a habit</h2>
+            <h2 id="habit-form-title">Create a habit</h2>
           </div>
         </div>
 
@@ -32,7 +39,7 @@
           <div class="split">
             <label>
               <span>Emoji</span>
-              <input id="habit-emoji" name="emoji" type="text" maxlength="2" placeholder="🚶">
+              <input id="habit-emoji" name="emoji" type="text" maxlength="2" placeholder="&#x1F6B6;">
             </label>
           </div>
 
@@ -59,14 +66,30 @@
 
           <label>
             <span>Metric</span>
-            <select id="habit-metric" name="metric">
-              <option value="times-per-day">Times per day</option>
-              <option value="days-per-week">Days per week</option>
-              <option value="times-per-week">Times per week</option>
-            </select>
+            <input
+              id="habit-metric"
+              name="metric"
+              type="text"
+              maxlength="20"
+              list="habit-metric-suggestions"
+              placeholder="mins"
+              value="times"
+              required
+            >
+            <datalist id="habit-metric-suggestions">
+              <option value="times"></option>
+              <option value="mins"></option>
+              <option value="hours"></option>
+              <option value="pages"></option>
+              <option value="miles"></option>
+              <option value="glasses"></option>
+            </datalist>
           </label>
 
-          <button type="submit" class="primary-btn">Add habit</button>
+          <div class="form-actions">
+            <button id="habit-submit-btn" type="submit" class="primary-btn">Add habit</button>
+            <button id="habit-cancel-btn" type="button" class="ghost-btn form-cancel hidden">Cancel edit</button>
+          </div>
         </form>
       </section>
 
@@ -115,14 +138,14 @@
       <div id="dashboard" class="dashboard-grid"></div>
     </section>
 
-    <section class="panel">
+    <section id="history-panel" class="panel history-panel hidden">
       <div class="panel-header">
         <div>
-          <p class="eyebrow">Habits</p>
-          <h2>Your tracker</h2>
+          <p class="eyebrow">Deep Dive</p>
+          <h2>Yearly habit history</h2>
         </div>
       </div>
-      <div id="habit-list" class="habit-list"></div>
+      <div id="habit-history" class="history-shell"></div>
     </section>
   </div>
 

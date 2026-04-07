@@ -1,12 +1,26 @@
 const STORAGE_KEY = "habit-tracker-data-v1";
 const TILE_DAYS = 42;
+const HISTORY_DAY_LABELS = [
+  { label: "Mon", row: 1 },
+  { label: "Wed", row: 3 },
+  { label: "Fri", row: 5 }
+];
 
 const state = loadState();
+const uiState = {
+  editingHabitId: null,
+  selectedHabitId: null,
+  selectedYear: null
+};
 
 const elements = {
   habitForm: document.querySelector("#habit-form"),
-  habitList: document.querySelector("#habit-list"),
+  habitFormTitle: document.querySelector("#habit-form-title"),
+  habitSubmitBtn: document.querySelector("#habit-submit-btn"),
+  habitCancelBtn: document.querySelector("#habit-cancel-btn"),
   dashboard: document.querySelector("#dashboard"),
+  historyPanel: document.querySelector("#history-panel"),
+  habitHistory: document.querySelector("#habit-history"),
   logForm: document.querySelector("#log-form"),
   logHabit: document.querySelector("#log-habit"),
   logDate: document.querySelector("#log-date"),
@@ -19,12 +33,24 @@ initialize();
 function initialize() {
   elements.logDate.value = formatDateKey(new Date());
 
+  registerServiceWorker();
   elements.habitForm.addEventListener("submit", handleHabitSubmit);
+  elements.habitCancelBtn.addEventListener("click", resetHabitForm);
   elements.logForm.addEventListener("submit", handleLogSubmit);
   elements.logHabit.addEventListener("change", renderLogSummary);
   elements.logDate.addEventListener("change", renderLogSummary);
 
   render();
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch((error) => {
+      console.warn("Unable to register service worker.", error);
+    });
+  });
 }
 
 function loadState() {
@@ -48,14 +74,40 @@ function saveState() {
 function handleHabitSubmit(event) {
   event.preventDefault();
   const formData = new FormData(event.currentTarget);
-  const habit = {
-    id: crypto.randomUUID(),
+  const habitData = {
     name: String(formData.get("name")).trim(),
-    emoji: String(formData.get("emoji")).trim() || "✨",
+    emoji: String(formData.get("emoji")).trim() || "\u2728",
     description: String(formData.get("description")).trim(),
     frequency: String(formData.get("frequency")),
-    metric: String(formData.get("metric")),
-    target: clampNumber(Number(formData.get("target")), 1, 31),
+    metric: sanitizeMetric(formData.get("metric")),
+    target: clampNumber(Number(formData.get("target")), 1, 31)
+  };
+
+  if (uiState.editingHabitId) {
+    const habit = findHabit(uiState.editingHabitId);
+    if (!habit) {
+      resetHabitForm();
+      render();
+      return;
+    }
+
+    const shouldContinue = window.confirm(
+      "Editing this habit will permanently delete all of its historical data. Do you want to continue?"
+    );
+    if (!shouldContinue) return;
+
+    Object.assign(habit, habitData, { logs: {} });
+    uiState.selectedHabitId = habit.id;
+    uiState.selectedYear = getDefaultHistoryYear(habit);
+    saveState();
+    resetHabitForm();
+    render();
+    return;
+  }
+
+  const habit = {
+    id: crypto.randomUUID(),
+    ...habitData,
     createdAt: new Date().toISOString(),
     logs: {}
   };
@@ -84,22 +136,100 @@ function handleLogSubmit(event) {
   }
 
   saveState();
+  syncSelection();
   render();
 }
 
 function deleteHabit(habitId) {
   const index = state.habits.findIndex((habit) => habit.id === habitId);
   if (index === -1) return;
+
   state.habits.splice(index, 1);
+  if (uiState.editingHabitId === habitId) {
+    resetHabitForm();
+  }
+  if (uiState.selectedHabitId === habitId) {
+    uiState.selectedHabitId = null;
+    uiState.selectedYear = null;
+  }
+
   saveState();
+  syncSelection();
   render();
 }
 
-function render() {
-  renderHabitOptions();
-  renderHabitList();
+function startEditingHabit(habitId) {
+  const habit = findHabit(habitId);
+  if (!habit) return;
+
+  uiState.editingHabitId = habit.id;
+  document.querySelector("#habit-name").value = habit.name;
+  document.querySelector("#habit-emoji").value = habit.emoji;
+  document.querySelector("#habit-description").value = habit.description;
+  document.querySelector("#habit-frequency").value = habit.frequency;
+  document.querySelector("#habit-target").value = habit.target;
+  document.querySelector("#habit-metric").value = readableMetricUnit(habit.metric);
+  renderHabitFormState();
+  elements.habitForm.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function resetHabitForm() {
+  uiState.editingHabitId = null;
+  elements.habitForm.reset();
+  document.querySelector("#habit-target").value = 1;
+  document.querySelector("#habit-metric").value = "times";
+  renderHabitFormState();
+}
+
+function toggleHistoryForHabit(habitId) {
+  if (uiState.selectedHabitId === habitId) {
+    uiState.selectedHabitId = null;
+    uiState.selectedYear = null;
+  } else {
+    uiState.selectedHabitId = habitId;
+    const habit = findHabit(habitId);
+    uiState.selectedYear = habit ? getDefaultHistoryYear(habit) : null;
+  }
+
   renderDashboard();
+  renderHabitHistory();
+}
+
+function selectHistoryYear(year) {
+  uiState.selectedYear = year;
+  renderHabitHistory();
+}
+
+function syncSelection() {
+  if (!uiState.selectedHabitId) return;
+
+  const selectedHabit = findHabit(uiState.selectedHabitId);
+  if (!selectedHabit) {
+    uiState.selectedHabitId = null;
+    uiState.selectedYear = null;
+    return;
+  }
+
+  const availableYears = getAvailableYears(selectedHabit);
+  if (!availableYears.includes(uiState.selectedYear)) {
+    uiState.selectedYear = getDefaultHistoryYear(selectedHabit);
+  }
+}
+
+function render() {
+  syncSelection();
+  renderHabitFormState();
+  renderHabitOptions();
+  renderDashboard();
+  renderHabitHistory();
   renderLogSummary();
+}
+
+function renderHabitFormState() {
+  const isEditing = Boolean(uiState.editingHabitId);
+  elements.habitFormTitle.textContent = isEditing ? "Edit a habit" : "Create a habit";
+  elements.habitSubmitBtn.textContent = isEditing ? "Save changes" : "Add habit";
+  elements.habitCancelBtn.classList.toggle("hidden", !isEditing);
 }
 
 function renderHabitOptions() {
@@ -128,53 +258,6 @@ function renderHabitOptions() {
   }
 }
 
-function renderHabitList() {
-  if (state.habits.length === 0) {
-    elements.habitList.innerHTML = `
-      <div class="empty-state log-summary">
-        Your habits will show up here with streaks, targets, and recent activity.
-      </div>
-    `;
-    return;
-  }
-
-  elements.habitList.innerHTML = state.habits
-    .map((habit) => {
-      const stats = getHabitStats(habit);
-      return `
-      <article class="habit-card">
-        <div class="habit-card-header">
-          <div class="habit-badge" aria-hidden="true">${escapeHtml(habit.emoji)}</div>
-          <div class="habit-title-group">
-            <div class="habit-title">
-              <h3>${escapeHtml(habit.name)}</h3>
-            </div>
-            <div class="metric-row">
-              <span class="meta-chip">${formatFrequency(habit)}</span>
-              <span class="meta-chip">${stats.totalCompletions} logs saved</span>
-            </div>
-          </div>
-          <div class="habit-card-actions">
-            <button class="icon-btn" type="button" data-delete="${habit.id}">Delete</button>
-          </div>
-        </div>
-
-        <p class="habit-description">${escapeHtml(habit.description || "No description yet.")}</p>
-
-        <div class="habit-footer">
-          <strong>${stats.currentStreak}-day streak</strong><br>
-          Best streak: ${stats.bestStreak} days. Last completed: ${stats.lastCompletedLabel}.
-        </div>
-      </article>
-    `;
-    })
-    .join("");
-
-  elements.habitList.querySelectorAll("[data-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteHabit(button.dataset.delete));
-  });
-}
-
 function renderDashboard() {
   if (state.habits.length === 0) {
     elements.dashboard.innerHTML = `
@@ -188,15 +271,19 @@ function renderDashboard() {
   elements.dashboard.innerHTML = state.habits
     .map((habit) => {
       const stats = getHabitStats(habit);
-      const tiles = buildTiles(habit);
+      const tiles = buildRecentTiles(habit);
+      const isSelected = habit.id === uiState.selectedHabitId;
       return `
-      <article class="dashboard-card">
+      <article class="dashboard-card ${isSelected ? "dashboard-card-selected" : ""}" data-dashboard-habit="${habit.id}" tabindex="0" role="button" aria-pressed="${isSelected}">
         <div class="dashboard-row">
           <div>
             <h3>${escapeHtml(habit.emoji)} ${escapeHtml(habit.name)}</h3>
             <p class="eyebrow">${formatFrequency(habit)}</p>
           </div>
-          <span class="streak-pill">${stats.currentStreak} day streak</span>
+          <div class="dashboard-card-actions">
+            <button class="icon-btn" type="button" data-edit-habit="${habit.id}">Edit</button>
+            <button class="icon-btn" type="button" data-delete-habit="${habit.id}">Delete</button>
+          </div>
         </div>
 
         <div class="tile-grid">
@@ -210,7 +297,8 @@ function renderDashboard() {
         </div>
 
         <div class="tile-legend">
-          <span>Lighter means less progress. Darker means the target was met.</span>
+          <span>${isSelected ? "Click again to close the yearly view." : "Click this card to open the yearly view."}</span>
+          <span class="streak-pill">${stats.currentStreak} day streak</span>
         </div>
 
         <div class="dashboard-metrics">
@@ -227,6 +315,121 @@ function renderDashboard() {
     `;
     })
     .join("");
+
+  elements.dashboard.querySelectorAll("[data-edit-habit]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      startEditingHabit(button.dataset.editHabit);
+    });
+  });
+
+  elements.dashboard.querySelectorAll("[data-delete-habit]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteHabit(button.dataset.deleteHabit);
+    });
+  });
+
+  elements.dashboard.querySelectorAll("[data-dashboard-habit]").forEach((card) => {
+    card.addEventListener("click", () => toggleHistoryForHabit(card.dataset.dashboardHabit));
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        toggleHistoryForHabit(card.dataset.dashboardHabit);
+      }
+    });
+  });
+}
+
+function renderHabitHistory() {
+  const habit = findHabit(uiState.selectedHabitId);
+  const isVisible = Boolean(habit);
+  elements.historyPanel.classList.toggle("hidden", !isVisible);
+  if (!habit) {
+    elements.habitHistory.innerHTML = "";
+    return;
+  }
+
+  const selectedYear = uiState.selectedYear ?? getDefaultHistoryYear(habit);
+  const availableYears = getAvailableYears(habit);
+  const history = buildYearlyHistory(habit, selectedYear);
+  const monthStyle = `grid-template-columns: repeat(${history.totalWeeks}, minmax(10px, 1fr));`;
+  const gridStyle = `grid-template-columns: repeat(${history.totalWeeks}, minmax(10px, 1fr));`;
+  const selectedStats = getYearSummary(habit, selectedYear);
+
+  elements.habitHistory.innerHTML = `
+    <div class="history-layout">
+      <div class="history-main">
+        <div class="history-summary-row">
+          <div>
+            <h3>${selectedStats.completedDays} completed days in ${selectedYear}</h3>
+            <p>${escapeHtml(habit.emoji)} ${escapeHtml(habit.name)} tracked as ${formatFrequency(habit)}.</p>
+          </div>
+          <div class="history-stat-chips">
+            <span class="meta-chip">${selectedStats.loggedDays} days logged</span>
+            <span class="meta-chip">${selectedStats.bestStreak} best streak</span>
+          </div>
+        </div>
+
+        <div class="history-board">
+          <div class="history-months" style="${monthStyle}">
+            ${history.monthLabels
+              .map((month) => `<span style="grid-column:${month.columnStart} / span ${month.columnSpan}">${month.label}</span>`)
+              .join("")}
+          </div>
+          <div class="history-grid-shell">
+            <div class="history-day-labels">
+              ${HISTORY_DAY_LABELS.map((day) => `<span style="grid-row:${day.row}">${day.label}</span>`).join("")}
+            </div>
+            <div class="history-grid" style="${gridStyle}">
+              ${history.weeks
+                .map(
+                  (week) => `
+                <div class="history-week">
+                  ${week.days
+                    .map(
+                      (day) => `
+                    <div class="history-tile level-${day.level} ${day.inYear ? "" : "history-tile-outside"}" data-tooltip="${day.tooltip}" aria-label="${day.tooltip}"></div>
+                  `
+                    )
+                    .join("")}
+                </div>
+              `
+                )
+                .join("")}
+            </div>
+          </div>
+          <div class="history-legend">
+            <span>Less</span>
+            <div class="history-legend-scale">
+              <span class="history-tile level-0"></span>
+              <span class="history-tile level-1"></span>
+              <span class="history-tile level-2"></span>
+              <span class="history-tile level-3"></span>
+              <span class="history-tile level-4"></span>
+            </div>
+            <span>More</span>
+          </div>
+        </div>
+      </div>
+
+      <aside class="history-years">
+        ${availableYears
+          .map(
+            (year) => `
+          <button class="year-toggle ${year === selectedYear ? "year-toggle-active" : ""}" type="button" data-history-year="${year}">
+            ${year}
+          </button>
+        `
+          )
+          .join("")}
+      </aside>
+    </div>
+  `;
+
+  elements.habitHistory.querySelectorAll("[data-history-year]").forEach((button) => {
+    button.addEventListener("click", () => selectHistoryYear(Number(button.dataset.historyYear)));
+  });
 }
 
 function renderLogSummary() {
@@ -278,16 +481,125 @@ function getHabitStats(habit) {
   };
 }
 
-function buildTiles(habit) {
+function getYearSummary(habit, year) {
+  const dates = Object.keys(habit.logs)
+    .filter((date) => Number(date.slice(0, 4)) === year)
+    .sort();
+  let completedDays = 0;
+  let bestStreak = 0;
+  let runningStreak = 0;
+
+  getDatesForCalendarYear(year).forEach((date) => {
+    if (isDayComplete(habit, date)) {
+      completedDays += 1;
+      runningStreak += 1;
+      bestStreak = Math.max(bestStreak, runningStreak);
+    } else {
+      runningStreak = 0;
+    }
+  });
+
+  return {
+    completedDays,
+    loggedDays: dates.length,
+    bestStreak
+  };
+}
+
+function buildRecentTiles(habit) {
   return getDateRange(TILE_DAYS).map((date) => {
     const count = habit.logs[date] || 0;
     const ratio = getCompletionRatio(habit, date);
-    const level = ratio === 0 ? 0 : ratio < 0.5 ? 1 : ratio < 1 ? 2 : ratio < 1.5 ? 3 : 4;
+    const level = getTileLevel(ratio);
     return {
       level,
       tooltip: `${formatDateLong(date)}: ${count} / ${habit.target} ${readableMetricUnit(habit.metric)}`
     };
   });
+}
+
+function buildYearlyHistory(habit, year) {
+  const firstDay = stripTime(new Date(year, 0, 1));
+  const lastDay = stripTime(new Date(year, 11, 31));
+  const start = addDays(firstDay, -firstDay.getDay());
+  const end = addDays(lastDay, 6 - lastDay.getDay());
+
+  const days = [];
+  for (let cursor = start; cursor <= end; cursor = addDays(cursor, 1)) {
+    const dateKey = formatDateKey(cursor);
+    const inYear = cursor.getFullYear() === year;
+    const count = habit.logs[dateKey] || 0;
+    const ratio = inYear ? getCompletionRatio(habit, dateKey) : 0;
+    days.push({
+      dateKey,
+      inYear,
+      level: inYear ? getTileLevel(ratio) : 0,
+      tooltip: `${formatDateLong(dateKey)}: ${count} / ${habit.target} ${readableMetricUnit(habit.metric)}${inYear && isDayComplete(habit, dateKey) ? " complete" : ""}`
+    });
+  }
+
+  const weeks = [];
+  for (let index = 0; index < days.length; index += 7) {
+    weeks.push({ days: days.slice(index, index + 7) });
+  }
+
+  const monthStarts = [];
+  for (let month = 0; month < 12; month += 1) {
+    const monthDate = new Date(year, month, 1);
+    monthStarts.push({
+      label: monthDate.toLocaleDateString(undefined, { month: "short" }),
+      columnStart: Math.floor((stripTime(monthDate) - start) / 86400000 / 7) + 1
+    });
+  }
+
+  const monthLabels = monthStarts.map((month, index) => ({
+    ...month,
+    columnSpan: (monthStarts[index + 1]?.columnStart ?? weeks.length + 1) - month.columnStart
+  }));
+
+  return {
+    weeks,
+    monthLabels,
+    totalWeeks: weeks.length
+  };
+}
+
+function getTileLevel(ratio) {
+  if (ratio === 0) return 0;
+  if (ratio < 0.5) return 1;
+  if (ratio < 1) return 2;
+  if (ratio < 1.5) return 3;
+  return 4;
+}
+
+function getAvailableYears(habit) {
+  const years = new Set([new Date().getFullYear()]);
+  if (habit.createdAt) {
+    years.add(new Date(habit.createdAt).getFullYear());
+  }
+
+  Object.keys(habit.logs).forEach((date) => years.add(Number(date.slice(0, 4))));
+
+  const sortedYears = Array.from(years).sort((left, right) => right - left);
+  const newest = sortedYears[0];
+  const oldest = sortedYears[sortedYears.length - 1];
+  const expanded = [];
+  for (let year = newest; year >= oldest; year -= 1) {
+    expanded.push(year);
+  }
+  return expanded;
+}
+
+function getDefaultHistoryYear(habit) {
+  return getAvailableYears(habit)[0];
+}
+
+function getDatesForCalendarYear(year) {
+  const dates = [];
+  for (let cursor = new Date(year, 0, 1); cursor.getFullYear() === year; cursor = addDays(cursor, 1)) {
+    dates.push(formatDateKey(cursor));
+  }
+  return dates;
 }
 
 function getCompletionRatio(habit, date) {
@@ -297,7 +609,7 @@ function getCompletionRatio(habit, date) {
 function isDayComplete(habit, date) {
   if (habit.frequency === "weekly") {
     const weekDates = getWeekDates(date);
-    const weeklyCount = weekDates.reduce((sum, currentDate) => sum + Math.min(habit.logs[currentDate] || 0, 1), 0);
+    const weeklyCount = weekDates.reduce((sum, currentDate) => sum + (habit.logs[currentDate] || 0), 0);
     return weeklyCount >= habit.target;
   }
 
@@ -346,15 +658,24 @@ function formatFrequency(habit) {
     return `${habit.target} ${unit} daily`;
   }
   if (habit.frequency === "weekly") {
-    return `${habit.target} days each week`;
+    return `${habit.target} ${unit} weekly`;
   }
   return `${habit.target} ${unit} custom`;
 }
 
 function readableMetricUnit(metric) {
   if (metric === "days-per-week") return "days";
-  if (metric === "times-per-week") return "times";
-  return "times";
+  if (metric === "times-per-week" || metric === "times-per-day") return "times";
+  return sanitizeMetric(metric);
+}
+
+function sanitizeMetric(metric) {
+  const normalized = String(metric || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9 -]/g, "")
+    .replaceAll(/\s+/g, " ");
+  return normalized || "times";
 }
 
 function findHabit(habitId) {

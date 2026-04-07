@@ -1,0 +1,10 @@
+{
+  "name": "habit-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A small local habit tracker app",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  }
+}
