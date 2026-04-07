@@ -612,6 +612,31 @@ function renderDashboard() {
       const stats = getHabitStats(habit);
       const tiles = buildRecentTiles(habit);
       const isSelected = habit.id === uiState.selectedHabitId;
+      const progressMarkup = habit.frequency === "weekly"
+        ? `
+        <div class="weekly-strip">
+          ${tiles
+            .map(
+              (tile) => `
+            <div class="week-status week-status-${tile.status}" data-tooltip="${tile.tooltip}" aria-label="${tile.tooltip}">
+              <span>${tile.label}</span>
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+      `
+        : `
+        <div class="tile-grid">
+          ${tiles
+            .map(
+              (tile) => `
+            <div class="tile level-${tile.level}" data-tooltip="${tile.tooltip}" aria-label="${tile.tooltip}"></div>
+          `
+            )
+            .join("")}
+        </div>
+      `;
       return `
       <article class="dashboard-card ${isSelected ? "dashboard-card-selected" : ""}" data-dashboard-habit="${habit.id}" tabindex="0" role="button" aria-pressed="${isSelected}">
         <div class="dashboard-row">
@@ -625,19 +650,11 @@ function renderDashboard() {
           </div>
         </div>
 
-        <div class="tile-grid">
-          ${tiles
-            .map(
-              (tile) => `
-            <div class="tile level-${tile.level}" data-tooltip="${tile.tooltip}" aria-label="${tile.tooltip}"></div>
-          `
-            )
-            .join("")}
-        </div>
+        ${progressMarkup}
 
         <div class="tile-legend">
-          <span>${isSelected ? "Click again to close the yearly view." : "Click this card to open the yearly view."}</span>
-          <span class="streak-pill">${stats.currentStreak} day streak</span>
+          <span>${habit.frequency === "weekly" ? "Weekly habits are judged Sunday through Saturday." : isSelected ? "Click again to close the yearly view." : "Click this card to open the yearly view."}</span>
+          <span class="streak-pill">${stats.currentStreak} ${habit.frequency === "weekly" ? "week" : "day"} streak</span>
         </div>
 
         <div class="dashboard-metrics">
@@ -691,10 +708,75 @@ function renderHabitHistory() {
 
   const selectedYear = uiState.selectedYear ?? getDefaultHistoryYear(habit);
   const availableYears = getAvailableYears(habit);
+  const selectedStats = getYearSummary(habit, selectedYear);
+
+  if (habit.frequency === "weekly") {
+    const weeklyHistory = buildWeeklyYearHistory(habit, selectedYear);
+    elements.habitHistory.innerHTML = `
+      <div class="history-layout">
+        <div class="history-main">
+          <div class="history-summary-row">
+            <div>
+              <h3>${selectedStats.completedDays} successful weeks in ${selectedYear}</h3>
+              <p>${escapeHtml(habit.emoji)} ${escapeHtml(habit.name)} tracked as ${formatFrequency(habit)}.</p>
+            </div>
+            <div class="history-stat-chips">
+              <span class="meta-chip">${selectedStats.loggedDays} active weeks</span>
+              <span class="meta-chip">${selectedStats.bestStreak} best streak</span>
+            </div>
+          </div>
+
+          <div class="weekly-year-board">
+            ${weeklyHistory.months
+              .map(
+                (month) => `
+              <section class="week-month-section">
+                <h4>${month.label}</h4>
+                <div class="week-month-list">
+                  ${month.weeks
+                    .map(
+                      (week) => `
+                    <article class="week-row week-row-${week.status}">
+                      <div>
+                        <strong>${week.label}</strong>
+                        <p>${week.subLabel}</p>
+                      </div>
+                      <span class="week-pill">${week.statusLabel}</span>
+                    </article>
+                  `
+                    )
+                    .join("")}
+                </div>
+              </section>
+            `
+              )
+              .join("")}
+          </div>
+        </div>
+
+        <aside class="history-years">
+          ${availableYears
+            .map(
+              (year) => `
+            <button class="year-toggle ${year === selectedYear ? "year-toggle-active" : ""}" type="button" data-history-year="${year}">
+              ${year}
+            </button>
+          `
+            )
+            .join("")}
+        </aside>
+      </div>
+    `;
+
+    elements.habitHistory.querySelectorAll("[data-history-year]").forEach((button) => {
+      button.addEventListener("click", () => selectHistoryYear(Number(button.dataset.historyYear)));
+    });
+    return;
+  }
+
   const history = buildYearlyHistory(habit, selectedYear);
   const monthStyle = `grid-template-columns: repeat(${history.totalWeeks}, minmax(10px, 1fr));`;
   const gridStyle = `grid-template-columns: repeat(${history.totalWeeks}, minmax(10px, 1fr));`;
-  const selectedStats = getYearSummary(habit, selectedYear);
 
   elements.habitHistory.innerHTML = `
     <div class="history-layout">
@@ -806,6 +888,10 @@ function setBusy(isBusy) {
 }
 
 function getHabitStats(habit) {
+  if (habit.frequency === "weekly") {
+    return getWeeklyHabitStats(habit);
+  }
+
   const dates = Object.keys(habit.logs).sort();
   const today = stripTime(new Date());
   const last42Days = getDateRange(TILE_DAYS);
@@ -837,6 +923,15 @@ function getHabitStats(habit) {
 }
 
 function getYearSummary(habit, year) {
+  if (habit.frequency === "weekly") {
+    const weeks = getWeekSummariesForYear(habit, year);
+    return {
+      completedDays: weeks.filter((week) => week.status === "success").length,
+      loggedDays: weeks.filter((week) => week.count > 0).length,
+      bestStreak: getBestWeeklyStreak(weeks)
+    };
+  }
+
   const dates = Object.keys(habit.logs)
     .filter((date) => Number(date.slice(0, 4)) === year)
     .sort();
@@ -862,6 +957,10 @@ function getYearSummary(habit, year) {
 }
 
 function buildRecentTiles(habit) {
+  if (habit.frequency === "weekly") {
+    return buildRecentWeeklyTiles(habit);
+  }
+
   return getDateRange(TILE_DAYS).map((date) => {
     const count = habit.logs[date] || 0;
     const ratio = getCompletionRatio(habit, date);
@@ -871,6 +970,133 @@ function buildRecentTiles(habit) {
       tooltip: `${formatDateLong(date)}: ${count} / ${habit.target} ${readableMetricUnit(habit.metric)}`
     };
   });
+}
+
+function buildRecentWeeklyTiles(habit) {
+  const currentWeekStart = getWeekStart(new Date());
+  const totalWeeks = Math.ceil(TILE_DAYS / 7);
+  return Array.from({ length: totalWeeks }, (_, index) => addDays(currentWeekStart, -7 * (totalWeeks - index - 1)))
+    .map((weekStart) => {
+      const summary = getWeekSummary(habit, weekStart);
+      return {
+        label: weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        status: summary.status,
+        tooltip: `${summary.label}: ${summary.count} / ${habit.target} ${readableMetricUnit(habit.metric)} (${summary.statusLabel})`
+      };
+    });
+}
+
+function buildWeeklyYearHistory(habit, year) {
+  const weeks = getWeekSummariesForYear(habit, year);
+  const months = new Map();
+
+  weeks.forEach((week) => {
+    const monthLabel = week.start.toLocaleDateString(undefined, { month: "long" });
+    const group = months.get(monthLabel) ?? [];
+    group.push(week);
+    months.set(monthLabel, group);
+  });
+
+  return {
+    months: Array.from(months.entries()).map(([label, groupedWeeks]) => ({
+      label,
+      weeks: groupedWeeks
+    }))
+  };
+}
+
+function getWeeklyHabitStats(habit) {
+  const startSource = Object.keys(habit.logs).sort()[0]
+    ? new Date(`${Object.keys(habit.logs).sort()[0]}T00:00:00`)
+    : new Date(habit.createdAt || Date.now());
+  const firstWeekStart = getWeekStart(startSource);
+  const currentWeekStart = getWeekStart(new Date());
+  const weeks = [];
+
+  for (let cursor = firstWeekStart; cursor <= currentWeekStart; cursor = addDays(cursor, 7)) {
+    weeks.push(getWeekSummary(habit, cursor));
+  }
+
+  const completedWeeks = weeks.filter((week) => week.completeWindow);
+  let currentStreak = 0;
+  for (let index = completedWeeks.length - 1; index >= 0; index -= 1) {
+    if (completedWeeks[index].status === "success") {
+      currentStreak += 1;
+    } else {
+      break;
+    }
+  }
+
+  return {
+    totalCompletions: Object.keys(habit.logs).length,
+    currentStreak,
+    bestStreak: getBestWeeklyStreak(completedWeeks),
+    lastCompletedLabel: completedWeeks.filter((week) => week.status === "success").at(-1)?.label ?? "Never"
+  };
+}
+
+function getBestWeeklyStreak(weeks) {
+  let bestStreak = 0;
+  let runningStreak = 0;
+
+  weeks.forEach((week) => {
+    if (week.status === "success") {
+      runningStreak += 1;
+      bestStreak = Math.max(bestStreak, runningStreak);
+    } else if (week.completeWindow) {
+      runningStreak = 0;
+    }
+  });
+
+  return bestStreak;
+}
+
+function getWeekSummariesForYear(habit, year) {
+  const yearStart = new Date(year, 0, 1);
+  const yearEnd = new Date(year, 11, 31);
+  const firstWeekStart = getWeekStart(yearStart);
+  const lastWeekStart = getWeekStart(yearEnd);
+  const weeks = [];
+
+  for (let cursor = firstWeekStart; cursor <= lastWeekStart; cursor = addDays(cursor, 7)) {
+    const summary = getWeekSummary(habit, cursor);
+    if (summary.end.getFullYear() === year || summary.start.getFullYear() === year) {
+      weeks.push(summary);
+    }
+  }
+
+  return weeks;
+}
+
+function getWeekSummary(habit, weekStart) {
+  const start = getWeekStart(weekStart);
+  const end = addDays(start, 6);
+  const today = stripTime(new Date());
+  const dates = Array.from({ length: 7 }, (_, index) => formatDateKey(addDays(start, index)));
+  const count = dates.reduce((sum, date) => sum + (habit.logs[date] || 0), 0);
+  const completeWindow = end <= today;
+
+  let status = "pending";
+  if (completeWindow) {
+    status = count >= habit.target ? "success" : "fail";
+  } else if (count >= habit.target) {
+    status = "success";
+  }
+
+  return {
+    completeWindow,
+    count,
+    end,
+    label: `${formatDateShort(start)} - ${formatDateShort(end)}`,
+    start,
+    status,
+    statusLabel: status === "success" ? "Successful" : status === "fail" ? "Missed" : "In progress",
+    subLabel: `${count} / ${habit.target} ${readableMetricUnit(habit.metric)}`
+  };
+}
+
+function getWeekStart(date) {
+  return addDays(stripTime(date), -stripTime(date).getDay());
 }
 
 function buildYearlyHistory(habit, year) {
@@ -1004,6 +1230,13 @@ function formatDateLong(dateKey) {
     month: "short",
     day: "numeric",
     year: "numeric"
+  });
+}
+
+function formatDateShort(date) {
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric"
   });
 }
 

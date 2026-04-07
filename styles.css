@@ -294,6 +294,38 @@ textarea {
   margin: 16px 0 12px;
 }
 
+.weekly-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0 12px;
+}
+
+.week-status {
+  min-height: 64px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: end;
+  padding: 10px;
+  font-size: 0.82rem;
+  color: #fffdf8;
+  position: relative;
+}
+
+.week-status-success {
+  background: linear-gradient(180deg, #5c9d60, #2f6c3b);
+}
+
+.week-status-fail {
+  background: linear-gradient(180deg, #d17b63, #a54b3c);
+}
+
+.week-status-pending {
+  background: linear-gradient(180deg, #d9d2c4, #b9aa92);
+  color: #3f3426;
+}
+
 .tile,
 .history-tile {
   aspect-ratio: 1 / 1;
@@ -324,6 +356,55 @@ textarea {
 .level-2 { background: var(--green-2); }
 .level-3 { background: var(--green-3); }
 .level-4 { background: var(--green-4); }
+
+.weekly-year-board {
+  display: grid;
+  gap: 18px;
+}
+
+.week-month-section h4 {
+  margin: 0 0 10px;
+}
+
+.week-month-list {
+  display: grid;
+  gap: 10px;
+}
+
+.week-row {
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  padding: 14px 16px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.week-row p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.week-row-success {
+  background: linear-gradient(180deg, rgba(92, 157, 96, 0.18), rgba(47, 108, 59, 0.12));
+}
+
+.week-row-fail {
+  background: linear-gradient(180deg, rgba(209, 123, 99, 0.18), rgba(165, 75, 60, 0.12));
+}
+
+.week-row-pending {
+  background: linear-gradient(180deg, rgba(217, 210, 196, 0.4), rgba(185, 170, 146, 0.25));
+}
+
+.week-pill {
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.7);
+}
 
 .history-panel {
   overflow: hidden;
@@ -529,10 +610,15 @@ textarea {
     gap: 4px;
   }
 
+  .weekly-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .history-summary-row,
   .dashboard-row,
   .tile-legend,
-  .auth-status-row {
+  .auth-status-row,
+  .week-row {
     flex-direction: column;
     align-items: start;
   }
