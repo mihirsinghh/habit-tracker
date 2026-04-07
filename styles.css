@@ -279,6 +279,13 @@ textarea {
   margin: 0;
 }
 
+.dashboard-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .streak-pill {
   padding: 8px 12px;
   border-radius: 999px;
@@ -311,6 +318,7 @@ textarea {
   font-size: 0.82rem;
   color: #fffdf8;
   position: relative;
+  box-shadow: inset 0 -10px 20px rgba(0, 0, 0, 0.08);
 }
 
 .week-status-success {
@@ -324,6 +332,19 @@ textarea {
 .week-status-pending {
   background: linear-gradient(180deg, #d9d2c4, #b9aa92);
   color: #3f3426;
+}
+
+.weekly-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(165, 75, 60, 0.12);
+  color: #8c3b30;
+  border: 1px solid rgba(165, 75, 60, 0.18);
 }
 
 .tile,
@@ -388,10 +409,12 @@ textarea {
 
 .week-row-success {
   background: linear-gradient(180deg, rgba(92, 157, 96, 0.18), rgba(47, 108, 59, 0.12));
+  border-color: rgba(47, 108, 59, 0.2);
 }
 
 .week-row-fail {
   background: linear-gradient(180deg, rgba(209, 123, 99, 0.18), rgba(165, 75, 60, 0.12));
+  border-color: rgba(165, 75, 60, 0.24);
 }
 
 .week-row-pending {

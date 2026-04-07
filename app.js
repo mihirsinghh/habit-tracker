@@ -642,7 +642,10 @@ function renderDashboard() {
         <div class="dashboard-row">
           <div>
             <h3>${escapeHtml(habit.emoji)} ${escapeHtml(habit.name)}</h3>
-            <p class="eyebrow">${formatFrequency(habit)}</p>
+            <div class="dashboard-subhead">
+              <p class="eyebrow">${formatFrequency(habit)}</p>
+              ${habit.frequency === "weekly" ? '<span class="weekly-badge">Weekly habit</span>' : ""}
+            </div>
           </div>
           <div class="dashboard-card-actions">
             <button class="icon-btn" type="button" data-edit-habit="${habit.id}">Edit</button>
@@ -719,6 +722,7 @@ function renderHabitHistory() {
             <div>
               <h3>${selectedStats.completedDays} successful weeks in ${selectedYear}</h3>
               <p>${escapeHtml(habit.emoji)} ${escapeHtml(habit.name)} tracked as ${formatFrequency(habit)}.</p>
+              <span class="weekly-badge">Weekly scoring mode</span>
             </div>
             <div class="history-stat-chips">
               <span class="meta-chip">${selectedStats.loggedDays} active weeks</span>
