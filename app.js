@@ -1096,15 +1096,22 @@ function getWeekSummary(habit, weekStart) {
   const start = getWeekStart(weekStart);
   const end = addDays(start, 6);
   const today = stripTime(new Date());
+  const currentWeekStart = getWeekStart(today);
   const dates = Array.from({ length: 7 }, (_, index) => formatDateKey(addDays(start, index)));
   const count = dates.reduce((sum, date) => sum + (habit.logs[date] || 0), 0);
   const completeWindow = end <= today;
   const success = isCountSuccessful(habit, count);
+  const isFutureWeek = start > currentWeekStart;
+  const isUpperBound = (habit.comparisonMode || "at_least") === "at_most";
 
   let status = "pending";
-  if (completeWindow) {
+  if (isFutureWeek) {
+    status = "pending";
+  } else if (completeWindow) {
     status = success ? "success" : "fail";
-  } else if (success) {
+  } else if (isUpperBound && !success) {
+    status = "fail";
+  } else if (success && !isUpperBound) {
     status = "success";
   }
 
