@@ -1,6 +1,7 @@
 const STORAGE_KEY = "habit-tracker-data-v1";
 const TILE_DAYS = 42;
 const WEEKLY_CARD_WEEKS = 4;
+const REQUEST_TIMEOUT_MS = 15000;
 const HISTORY_DAY_LABELS = [
   { label: "Mon", row: 1 },
   { label: "Wed", row: 3 },
@@ -67,6 +68,30 @@ async function initialize() {
   render();
 }
 
+async function withTimeout(promise, label, timeoutMs = REQUEST_TIMEOUT_MS) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          reject(new Error(`${label} timed out. Please try again.`));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function loadSupabaseModule() {
+  try {
+    return await import("https://esm.sh/@supabase/supabase-js@2");
+  } catch (_primaryError) {
+    return import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm");
+  }
+}
+
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
 
@@ -79,7 +104,7 @@ function registerServiceWorker() {
 
 async function setupSupabase() {
   try {
-    const response = await fetch("./api/config", { cache: "no-store" });
+    const response = await withTimeout(fetch("./api/config", { cache: "no-store" }), "Loading app configuration");
     const config = await response.json();
     if (!config.configured) {
       state.configured = false;
@@ -87,10 +112,10 @@ async function setupSupabase() {
       return;
     }
 
-    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+    const { createClient } = await withTimeout(loadSupabaseModule(), "Loading auth library");
     state.supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
 
-    const { data, error } = await state.supabase.auth.getSession();
+    const { data, error } = await withTimeout(state.supabase.auth.getSession(), "Restoring your session");
     if (error) throw error;
     applySession(data.session);
 
@@ -103,7 +128,7 @@ async function setupSupabase() {
     await refreshHabits();
   } catch (error) {
     console.warn("Unable to initialize auth.", error);
-    state.configured = false;
+    setAuthMessage(error.message || "Unable to initialize the app right now. Please refresh and try again.", "error");
   } finally {
     state.authReady = true;
   }
@@ -123,7 +148,10 @@ async function handleSignIn(event) {
     setAuthMessage("");
     const email = elements.authEmail.value.trim();
     const password = elements.authPassword.value;
-    const { error } = await state.supabase.auth.signInWithPassword({ email, password });
+    const { error } = await withTimeout(
+      state.supabase.auth.signInWithPassword({ email, password }),
+      "Signing in"
+    );
 
     if (error) {
       setAuthMessage(error.message, "error");
@@ -147,7 +175,10 @@ async function handleSignUp() {
     setAuthMessage("");
     const email = elements.authEmail.value.trim();
     const password = elements.authPassword.value;
-    const { error } = await state.supabase.auth.signUp({ email, password });
+    const { error } = await withTimeout(
+      state.supabase.auth.signUp({ email, password }),
+      "Creating your account"
+    );
 
     if (error) {
       setAuthMessage(error.message, "error");
@@ -167,7 +198,7 @@ async function handleSignOut() {
 
   try {
     setBusy(true);
-    await state.supabase.auth.signOut();
+    await withTimeout(state.supabase.auth.signOut(), "Signing out");
     state.habits = [];
     uiState.selectedHabitId = null;
     uiState.selectedYear = null;
@@ -187,20 +218,37 @@ async function refreshHabits() {
     return;
   }
 
-  const { data: habitsData, error: habitsError } = await state.supabase
-    .from("habits")
-    .select("id,name,emoji,description,frequency,comparison_mode,metric,target,created_at")
-    .order("created_at", { ascending: false });
-  if (habitsError) {
-    setAuthMessage(habitsError.message);
+  let habitsData;
+  let habitsError;
+  let logsData;
+  let logsError;
+
+  try {
+    [{ data: habitsData, error: habitsError }, { data: logsData, error: logsError }] = await Promise.all([
+      withTimeout(
+        state.supabase
+          .from("habits")
+          .select("id,name,emoji,description,frequency,comparison_mode,metric,target,created_at")
+          .order("created_at", { ascending: false }),
+        "Loading habits"
+      ),
+      withTimeout(
+        state.supabase
+          .from("habit_logs")
+          .select("habit_id,date,count"),
+        "Loading habit logs"
+      )
+    ]);
+  } catch (error) {
+    setAuthMessage(error.message || "Unable to load habits right now.", "error");
     return;
   }
-
-  const { data: logsData, error: logsError } = await state.supabase
-    .from("habit_logs")
-    .select("habit_id,date,count");
+  if (habitsError) {
+    setAuthMessage(habitsError.message, "error");
+    return;
+  }
   if (logsError) {
-    setAuthMessage(logsError.message);
+    setAuthMessage(logsError.message, "error");
     return;
   }
 
@@ -262,10 +310,13 @@ async function importLocalHabitsIfNeeded() {
     created_at: habit.createdAt ?? new Date().toISOString()
   }));
 
-  const { data: createdHabits, error: habitsError } = await state.supabase
-    .from("habits")
-    .insert(importedHabits)
-    .select("id");
+  const { data: createdHabits, error: habitsError } = await withTimeout(
+    state.supabase
+      .from("habits")
+      .insert(importedHabits)
+      .select("id"),
+    "Importing local habits"
+  );
   if (habitsError) {
     setAuthMessage(`Imported local data failed: ${habitsError.message}`);
     return;
@@ -285,7 +336,10 @@ async function importLocalHabitsIfNeeded() {
   });
 
   if (logRows.length > 0) {
-    const { error: logsError } = await state.supabase.from("habit_logs").insert(logRows);
+    const { error: logsError } = await withTimeout(
+      state.supabase.from("habit_logs").insert(logRows),
+      "Importing local logs"
+    );
     if (logsError) {
       setAuthMessage(`Imported local logs failed: ${logsError.message}`);
       return;
@@ -388,27 +442,33 @@ async function handleHabitSubmit(event) {
       );
       if (!shouldContinue) return;
 
-      const { error: updateError } = await state.supabase
-        .from("habits")
-        .update({
-          name: habitData.name,
-          emoji: habitData.emoji,
-          description: habitData.description,
-          frequency: habitData.frequency,
-          comparison_mode: habitData.comparisonMode,
-          metric: habitData.metric,
-          target: habitData.target
-        })
-        .eq("id", habit.id);
+      const { error: updateError } = await withTimeout(
+        state.supabase
+          .from("habits")
+          .update({
+            name: habitData.name,
+            emoji: habitData.emoji,
+            description: habitData.description,
+            frequency: habitData.frequency,
+            comparison_mode: habitData.comparisonMode,
+            metric: habitData.metric,
+            target: habitData.target
+          })
+          .eq("id", habit.id),
+        "Saving habit changes"
+      );
       if (updateError) {
         setAuthMessage(updateError.message, "error");
         return;
       }
 
-      const { error: deleteLogsError } = await state.supabase
-        .from("habit_logs")
-        .delete()
-        .eq("habit_id", habit.id);
+      const { error: deleteLogsError } = await withTimeout(
+        state.supabase
+          .from("habit_logs")
+          .delete()
+          .eq("habit_id", habit.id),
+        "Clearing habit history"
+      );
       if (deleteLogsError) {
         setAuthMessage(deleteLogsError.message, "error");
         return;
@@ -418,20 +478,23 @@ async function handleHabitSubmit(event) {
       uiState.selectedHabitId = habit.id;
       resetHabitForm();
     } else {
-      const { data, error } = await state.supabase
-        .from("habits")
-        .insert({
-          user_id: state.user.id,
-          name: habitData.name,
-          emoji: habitData.emoji,
-          description: habitData.description,
-          frequency: habitData.frequency,
-          comparison_mode: habitData.comparisonMode,
-          metric: habitData.metric,
-          target: habitData.target
-        })
-        .select("id, created_at")
-        .single();
+      const { data, error } = await withTimeout(
+        state.supabase
+          .from("habits")
+          .insert({
+            user_id: state.user.id,
+            name: habitData.name,
+            emoji: habitData.emoji,
+            description: habitData.description,
+            frequency: habitData.frequency,
+            comparison_mode: habitData.comparisonMode,
+            metric: habitData.metric,
+            target: habitData.target
+          })
+          .select("id, created_at")
+          .single(),
+        "Creating habit"
+      );
       if (error) {
         setAuthMessage(error.message, "error");
         return;
@@ -443,6 +506,7 @@ async function handleHabitSubmit(event) {
         createdAt: data.created_at,
         logs: {}
       });
+      await refreshHabits();
       event.currentTarget.reset();
       document.querySelector("#habit-target").value = 1;
       document.querySelector("#habit-comparison").value = "at_least";
@@ -478,11 +542,14 @@ async function handleLogSubmit(event) {
     setAuthMessage("");
 
     if (count === 0) {
-      const { error } = await state.supabase
-        .from("habit_logs")
-        .delete()
-        .eq("habit_id", habit.id)
-        .eq("date", date);
+      const { error } = await withTimeout(
+        state.supabase
+          .from("habit_logs")
+          .delete()
+          .eq("habit_id", habit.id)
+          .eq("date", date),
+        "Clearing log"
+      );
       if (error) {
         setAuthMessage(error.message, "error");
         return;
@@ -490,9 +557,12 @@ async function handleLogSubmit(event) {
 
       delete habit.logs[date];
     } else {
-      const { error } = await state.supabase
-        .from("habit_logs")
-        .upsert([{ user_id: state.user.id, habit_id: habit.id, date, count }], { onConflict: "habit_id,date" });
+      const { error } = await withTimeout(
+        state.supabase
+          .from("habit_logs")
+          .upsert([{ user_id: state.user.id, habit_id: habit.id, date, count }], { onConflict: "habit_id,date" }),
+        "Saving log"
+      );
       if (error) {
         setAuthMessage(error.message, "error");
         return;
@@ -515,7 +585,10 @@ async function deleteHabit(habitId) {
   try {
     setBusy(true);
     setAuthMessage("");
-    const { error } = await state.supabase.from("habits").delete().eq("id", habitId);
+    const { error } = await withTimeout(
+      state.supabase.from("habits").delete().eq("id", habitId),
+      "Deleting habit"
+    );
     if (error) {
       setAuthMessage(error.message, "error");
       return;
