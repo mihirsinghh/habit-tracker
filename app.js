@@ -642,7 +642,6 @@ function renderDashboard() {
             <div class="week-status week-status-${tile.status}" data-tooltip="${tile.tooltip}" aria-label="${tile.tooltip}">
               <strong>${tile.label}</strong>
               <small>${tile.subLabel}</small>
-              <span>${tile.statusLabel}</span>
             </div>
           `
             )

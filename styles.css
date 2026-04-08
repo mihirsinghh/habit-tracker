@@ -304,46 +304,39 @@ textarea {
 .weekly-strip {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 10px;
-  margin: 16px 0 12px;
+  gap: 8px;
+  margin: 14px 0 12px;
 }
 
 .week-status {
-  min-height: 88px;
-  border-radius: 14px;
+  min-height: 58px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  justify-content: flex-end;
-  padding: 12px 14px;
-  font-size: 0.82rem;
+  justify-content: center;
+  padding: 8px 12px;
+  font-size: 0.8rem;
   color: #fffdf8;
   position: relative;
-  box-shadow: inset 0 -10px 20px rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 -6px 12px rgba(0, 0, 0, 0.06);
 }
 
 .week-status strong,
-.week-status small,
-.week-status span {
+.week-status small {
   display: block;
 }
 
 .week-status strong {
-  font-size: 0.95rem;
+  font-size: 0.88rem;
+  line-height: 1.15;
 }
 
 .week-status small {
-  margin-top: 4px;
-  font-size: 0.82rem;
-  opacity: 0.92;
-}
-
-.week-status span {
-  margin-top: 8px;
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  margin-top: 3px;
+  font-size: 0.76rem;
+  opacity: 0.9;
 }
 
 .week-status-success {
@@ -355,8 +348,9 @@ textarea {
 }
 
 .week-status-pending {
-  background: linear-gradient(180deg, #d9d2c4, #b9aa92);
+  background: rgba(255, 253, 248, 0.45);
   color: #3f3426;
+  box-shadow: none;
 }
 
 .weekly-badge {
