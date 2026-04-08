@@ -1348,8 +1348,10 @@ function getWeekSummary(habit, weekStart) {
   const isUpperBound = (habit.comparisonMode || "at_least") === "at_most";
 
   let status = "pending";
-  if (isPreStartWeek || isFutureWeek) {
+  if (isFutureWeek) {
     status = "pending";
+  } else if (isPreStartWeek) {
+    status = "fail";
   } else if (completeWindow) {
     status = success ? "success" : "fail";
   } else if (isUpperBound && !success) {
@@ -1436,11 +1438,19 @@ function getCompletionState(habit, dateKey) {
   const startDate = getHabitStartDate(habit);
   const isUpperBound = (habit.comparisonMode || "at_least") === "at_most";
 
-  if (date < startDate || date > today) {
+  if (date > today) {
     return {
       level: 0,
       status: "pending",
       statusLabel: "In progress"
+    };
+  }
+
+  if (date < startDate) {
+    return {
+      level: 0,
+      status: "fail",
+      statusLabel: "Missed"
     };
   }
 
