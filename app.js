@@ -64,6 +64,7 @@ async function initialize() {
   elements.logHabit.addEventListener("change", renderLogSummary);
   elements.logDate.addEventListener("change", renderLogSummary);
 
+  render();
   await setupSupabase();
   render();
 }
@@ -141,7 +142,10 @@ function applySession(session) {
 
 async function handleSignIn(event) {
   event.preventDefault();
-  if (!state.supabase) return;
+  if (!state.supabase) {
+    setAuthMessage(state.configured ? "Still connecting to sync. Please try again in a moment." : "Sync is not available right now.", "error");
+    return;
+  }
 
   try {
     setBusy(true);
@@ -168,7 +172,10 @@ async function handleSignIn(event) {
 }
 
 async function handleSignUp() {
-  if (!state.supabase) return;
+  if (!state.supabase) {
+    setAuthMessage(state.configured ? "Still connecting to sync. Please try again in a moment." : "Sync is not available right now.", "error");
+    return;
+  }
 
   try {
     setBusy(true);
@@ -194,7 +201,10 @@ async function handleSignUp() {
 }
 
 async function handleSignOut() {
-  if (!state.supabase) return;
+  if (!state.supabase) {
+    setAuthMessage("Sync is not available right now.", "error");
+    return;
+  }
 
   try {
     setBusy(true);
@@ -628,24 +638,26 @@ function renderAuthState() {
   elements.authSignedIn.classList.toggle("hidden", !signedIn);
   elements.authUserEmail.textContent = state.user?.email ?? "";
 
-  elements.authEmail.disabled = uiState.isBusy || !state.configured;
-  elements.authPassword.disabled = uiState.isBusy || !state.configured;
-  elements.authSignInBtn.disabled = uiState.isBusy || !state.configured;
-  elements.authSignUpBtn.disabled = uiState.isBusy || !state.configured;
+  elements.authEmail.disabled = uiState.isBusy;
+  elements.authPassword.disabled = uiState.isBusy;
+  elements.authSignInBtn.disabled = uiState.isBusy;
+  elements.authSignUpBtn.disabled = uiState.isBusy;
   elements.authSignOutBtn.disabled = uiState.isBusy || !signedIn;
 }
 
 function renderHabitFormState() {
-  const enabled = Boolean(state.user);
   const isEditing = Boolean(uiState.editingHabitId);
   elements.habitFormTitle.textContent = isEditing ? "Edit a habit" : "Create a habit";
   elements.habitSubmitBtn.textContent = isEditing ? "Save changes" : "Add habit";
   elements.habitCancelBtn.classList.toggle("hidden", !isEditing);
 
   Array.from(elements.habitForm.elements).forEach((field) => {
-    if (field instanceof HTMLElement) {
-      field.toggleAttribute("disabled", !enabled || uiState.isBusy);
+    if (!(field instanceof HTMLElement)) return;
+    if (field === elements.habitSubmitBtn || field === elements.habitCancelBtn) {
+      field.toggleAttribute("disabled", uiState.isBusy || !state.user);
+      return;
     }
+    field.toggleAttribute("disabled", uiState.isBusy);
   });
 }
 
