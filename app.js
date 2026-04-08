@@ -640,7 +640,9 @@ function renderDashboard() {
             .map(
               (tile) => `
             <div class="week-status week-status-${tile.status}" data-tooltip="${tile.tooltip}" aria-label="${tile.tooltip}">
-              <span>${tile.label}</span>
+              <strong>${tile.label}</strong>
+              <small>${tile.subLabel}</small>
+              <span>${tile.statusLabel}</span>
             </div>
           `
             )
@@ -1002,8 +1004,10 @@ function buildRecentWeeklyTiles(habit) {
     .map((weekStart) => {
       const summary = getWeekSummary(habit, weekStart);
       return {
-        label: weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        label: summary.label,
         status: summary.status,
+        statusLabel: summary.statusLabel,
+        subLabel: summary.subLabel,
         tooltip: `${summary.label}: ${summary.count} / ${habit.target} ${readableMetricUnit(habit.metric)} (${summary.statusLabel})`
       };
     });
@@ -1042,8 +1046,8 @@ function getWeeklyHabitStats(habit) {
 
   const completedWeeks = weeks.filter((week) => week.completeWindow);
   let currentStreak = 0;
-  for (let index = completedWeeks.length - 1; index >= 0; index -= 1) {
-    if (completedWeeks[index].status === "success") {
+  for (let index = weeks.length - 1; index >= 0; index -= 1) {
+    if (weeks[index].status === "success") {
       currentStreak += 1;
     } else {
       break;
