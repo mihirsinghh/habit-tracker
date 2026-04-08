@@ -1194,8 +1194,15 @@ function getYearSummary(habit, year) {
   let completedDays = 0;
   let bestStreak = 0;
   let runningStreak = 0;
+  const startDate = getHabitStartDate(habit);
+  const today = stripTime(new Date());
 
   getDatesForCalendarYear(year).forEach((date) => {
+    const dateValue = stripTime(new Date(`${date}T00:00:00`));
+    if (dateValue < startDate || dateValue > today) {
+      return;
+    }
+
     if (isDayComplete(habit, date)) {
       completedDays += 1;
       runningStreak += 1;
@@ -1218,8 +1225,8 @@ function buildRecentTiles(habit) {
   }
 
   return getDateRange(TILE_DAYS).map((date) => {
+    const completion = getCompletionState(habit, date);
     const count = habit.logs[date] || 0;
-    const completion = getCompletionState(habit, count);
     return {
       level: completion.level,
       status: completion.status,
@@ -1376,7 +1383,7 @@ function buildYearlyHistory(habit, year) {
     const dateKey = formatDateKey(cursor);
     const inYear = cursor.getFullYear() === year;
       const count = habit.logs[dateKey] || 0;
-      const completion = inYear ? getCompletionState(habit, count) : { level: 0, status: "pending", statusLabel: "Outside year" };
+      const completion = inYear ? getCompletionState(habit, dateKey) : { level: 0, status: "pending", statusLabel: "Outside year" };
       days.push({
         dateKey,
         inYear,
@@ -1420,8 +1427,37 @@ function getTileLevel(ratio) {
   return 4;
 }
 
-function getCompletionState(habit, count) {
-  if ((habit.comparisonMode || "at_least") === "at_most") {
+function getCompletionState(habit, dateKey) {
+  const count = habit.logs[dateKey] || 0;
+  const date = stripTime(new Date(`${dateKey}T00:00:00`));
+  const today = stripTime(new Date());
+  const startDate = getHabitStartDate(habit);
+  const isUpperBound = (habit.comparisonMode || "at_least") === "at_most";
+
+  if (date < startDate || date > today) {
+    return {
+      level: 0,
+      status: "pending",
+      statusLabel: "In progress"
+    };
+  }
+
+  if (isUpperBound) {
+    if (date.getTime() === today.getTime()) {
+      if (count > habit.target) {
+        return {
+          level: 0,
+          status: "fail",
+          statusLabel: "Missed"
+        };
+      }
+      return {
+        level: count === 0 ? 1 : 2,
+        status: "pending",
+        statusLabel: "In progress"
+      };
+    }
+
     if (count <= habit.target) {
       return {
         level: count === 0 ? 2 : 4,
@@ -1437,12 +1473,49 @@ function getCompletionState(habit, count) {
     };
   }
 
-  const ratio = Math.min(count / habit.target, 2);
+  if (count >= habit.target) {
+    const ratio = Math.min(count / habit.target, 2);
+    return {
+      level: getTileLevel(ratio),
+      status: "success",
+      statusLabel: "Successful"
+    };
+  }
+
+  if (date.getTime() === today.getTime()) {
+    const ratio = Math.min(count / habit.target, 2);
+    return {
+      level: getTileLevel(ratio),
+      status: "pending",
+      statusLabel: "In progress"
+    };
+  }
+
   return {
-    level: getTileLevel(ratio),
-    status: count >= habit.target ? "success" : "pending",
-    statusLabel: count >= habit.target ? "Successful" : "In progress"
+    level: 0,
+    status: "fail",
+    statusLabel: "Missed"
   };
+}
+
+function getCompletionRatio(habit, date) {
+  const safeTarget = habit.target || 1;
+  return Math.min((habit.logs[date] || 0) / safeTarget, 2);
+}
+
+function isDayComplete(habit, date) {
+  const dateValue = stripTime(new Date(`${date}T00:00:00`));
+  if (dateValue < getHabitStartDate(habit)) {
+    return false;
+  }
+
+  if (habit.frequency === "weekly") {
+    const weekDates = getWeekDates(date);
+    const weeklyCount = weekDates.reduce((sum, currentDate) => sum + (habit.logs[currentDate] || 0), 0);
+    return isCountSuccessful(habit, weeklyCount);
+  }
+
+  return getCompletionState(habit, date).status === "success";
 }
 
 function getAvailableYears(habit) {
@@ -1473,25 +1546,6 @@ function getDatesForCalendarYear(year) {
     dates.push(formatDateKey(cursor));
   }
   return dates;
-}
-
-function getCompletionRatio(habit, date) {
-  return Math.min((habit.logs[date] || 0) / habit.target, 2);
-}
-
-function isDayComplete(habit, date) {
-  const dateValue = stripTime(new Date(`${date}T00:00:00`));
-  if (dateValue < getHabitStartDate(habit)) {
-    return false;
-  }
-
-  if (habit.frequency === "weekly") {
-    const weekDates = getWeekDates(date);
-    const weeklyCount = weekDates.reduce((sum, currentDate) => sum + (habit.logs[currentDate] || 0), 0);
-    return isCountSuccessful(habit, weeklyCount);
-  }
-
-  return isCountSuccessful(habit, habit.logs[date] || 0);
 }
 
 function isCountSuccessful(habit, count) {
