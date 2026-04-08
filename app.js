@@ -1,4 +1,5 @@
 const STORAGE_KEY = "habit-tracker-data-v1";
+const SESSION_STORAGE_KEY = "habit-tracker-session-v1";
 const TILE_DAYS = 42;
 const WEEKLY_CARD_WEEKS = 4;
 const REQUEST_TIMEOUT_MS = 15000;
@@ -84,14 +85,6 @@ async function withTimeout(promise, label, timeoutMs = REQUEST_TIMEOUT_MS) {
   }
 }
 
-async function loadSupabaseModule() {
-  try {
-    return await import("https://esm.sh/@supabase/supabase-js@2");
-  } catch (_primaryError) {
-    return import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm");
-  }
-}
-
 function ensureSupabaseReady() {
   if (state.supabase || supabaseInitPromise) {
     return supabaseInitPromise ?? Promise.resolve();
@@ -126,20 +119,15 @@ async function setupSupabase() {
       return;
     }
 
-    const { createClient } = await withTimeout(loadSupabaseModule(), "Loading auth library");
-    state.supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+    state.supabase = {
+      supabaseUrl: config.supabaseUrl,
+      supabaseAnonKey: config.supabaseAnonKey
+    };
 
-    const { data, error } = await withTimeout(state.supabase.auth.getSession(), "Restoring your session");
-    if (error) throw error;
-    applySession(data.session);
-
-    state.supabase.auth.onAuthStateChange(async (_event, session) => {
-      applySession(session);
+    await restoreSession();
+    if (state.user) {
       await refreshHabits();
-      render();
-    });
-
-    await refreshHabits();
+    }
   } catch (error) {
     console.warn("Unable to initialize auth.", error);
     setAuthMessage(error.message || "Unable to initialize the app right now. Please refresh and try again.", "error");
@@ -151,6 +139,117 @@ async function setupSupabase() {
 function applySession(session) {
   state.session = session;
   state.user = session?.user ?? null;
+  if (state.session?.access_token) {
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+      access_token: state.session.access_token,
+      refresh_token: state.session.refresh_token,
+      user: state.session.user
+    }));
+  } else {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  }
+}
+
+function clearSession() {
+  applySession(null);
+  state.habits = [];
+}
+
+function getStoredSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function apiFetch(path, { method = "GET", headers = {}, body, auth = true, query } = {}) {
+  if (!state.supabase) {
+    throw new Error("Sync is not available right now.");
+  }
+
+  const url = new URL(path, state.supabase.supabaseUrl);
+  if (query) {
+    Object.entries(query).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        url.searchParams.set(key, value);
+      }
+    });
+  }
+
+  const requestHeaders = {
+    apikey: state.supabase.supabaseAnonKey,
+    ...headers
+  };
+
+  if (auth && state.session?.access_token) {
+    requestHeaders.Authorization = `Bearer ${state.session.access_token}`;
+  }
+
+  let payload = body;
+  if (body !== undefined && body !== null && !(body instanceof FormData)) {
+    requestHeaders["Content-Type"] = "application/json";
+    payload = JSON.stringify(body);
+  }
+
+  const response = await withTimeout(
+    fetch(url.toString(), {
+      method,
+      headers: requestHeaders,
+      body: payload
+    }),
+    `Request to ${path}`
+  );
+
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new Error(data?.msg || data?.message || `Request failed with status ${response.status}.`);
+  }
+  return data;
+}
+
+async function restoreSession() {
+  const stored = getStoredSession();
+  if (!stored?.access_token) {
+    clearSession();
+    return;
+  }
+
+  try {
+    const user = await apiFetch("/auth/v1/user", {
+      headers: {
+        Authorization: `Bearer ${stored.access_token}`
+      }
+    });
+    applySession({
+      access_token: stored.access_token,
+      refresh_token: stored.refresh_token,
+      user
+    });
+  } catch (_error) {
+    if (!stored.refresh_token) {
+      clearSession();
+      return;
+    }
+
+    try {
+      const refreshed = await apiFetch("/auth/v1/token", {
+        method: "POST",
+        auth: false,
+        query: { grant_type: "refresh_token" },
+        body: { refresh_token: stored.refresh_token }
+      });
+      applySession({
+        access_token: refreshed.access_token,
+        refresh_token: refreshed.refresh_token,
+        user: refreshed.user
+      });
+    } catch (_refreshError) {
+      clearSession();
+    }
+  }
 }
 
 async function handleSignIn(event) {
@@ -169,18 +268,22 @@ async function handleSignIn(event) {
     setAuthMessage("");
     const email = elements.authEmail.value.trim();
     const password = elements.authPassword.value;
-    const { error } = await withTimeout(
-      state.supabase.auth.signInWithPassword({ email, password }),
-      "Signing in"
-    );
-
-    if (error) {
-      setAuthMessage(error.message, "error");
-      return;
-    }
+    const session = await apiFetch("/auth/v1/token", {
+      method: "POST",
+      auth: false,
+      query: { grant_type: "password" },
+      body: { email, password }
+    });
+    applySession({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+      user: session.user
+    });
+    await refreshHabits();
 
     elements.authForm.reset();
     setAuthMessage("Signed in successfully.");
+    render();
   } catch (error) {
     setAuthMessage(error.message || "Unable to sign in.", "error");
   } finally {
@@ -203,15 +306,11 @@ async function handleSignUp() {
     setAuthMessage("");
     const email = elements.authEmail.value.trim();
     const password = elements.authPassword.value;
-    const { error } = await withTimeout(
-      state.supabase.auth.signUp({ email, password }),
-      "Creating your account"
-    );
-
-    if (error) {
-      setAuthMessage(error.message, "error");
-      return;
-    }
+    await apiFetch("/auth/v1/signup", {
+      method: "POST",
+      auth: false,
+      body: { email, password }
+    });
 
     setAuthMessage("Account created. Check your email if confirmation is required, then sign in.");
   } catch (error) {
@@ -229,8 +328,12 @@ async function handleSignOut() {
 
   try {
     setBusy(true);
-    await withTimeout(state.supabase.auth.signOut(), "Signing out");
-    state.habits = [];
+    if (state.session?.access_token) {
+      await apiFetch("/auth/v1/logout", {
+        method: "POST"
+      });
+    }
+    clearSession();
     uiState.selectedHabitId = null;
     uiState.selectedYear = null;
     resetHabitForm();
@@ -255,31 +358,21 @@ async function refreshHabits() {
   let logsError;
 
   try {
-    [{ data: habitsData, error: habitsError }, { data: logsData, error: logsError }] = await Promise.all([
-      withTimeout(
-        state.supabase
-          .from("habits")
-          .select("id,name,emoji,description,frequency,comparison_mode,metric,target,created_at")
-          .order("created_at", { ascending: false }),
-        "Loading habits"
-      ),
-      withTimeout(
-        state.supabase
-          .from("habit_logs")
-          .select("habit_id,date,count"),
-        "Loading habit logs"
-      )
+    [habitsData, logsData] = await Promise.all([
+      apiFetch("/rest/v1/habits", {
+        query: {
+          select: "id,name,emoji,description,frequency,comparison_mode,metric,target,created_at",
+          order: "created_at.desc"
+        }
+      }),
+      apiFetch("/rest/v1/habit_logs", {
+        query: {
+          select: "habit_id,date,count"
+        }
+      })
     ]);
   } catch (error) {
     setAuthMessage(error.message || "Unable to load habits right now.", "error");
-    return;
-  }
-  if (habitsError) {
-    setAuthMessage(habitsError.message, "error");
-    return;
-  }
-  if (logsError) {
-    setAuthMessage(logsError.message, "error");
     return;
   }
 
@@ -341,15 +434,20 @@ async function importLocalHabitsIfNeeded() {
     created_at: habit.createdAt ?? new Date().toISOString()
   }));
 
-  const { data: createdHabits, error: habitsError } = await withTimeout(
-    state.supabase
-      .from("habits")
-      .insert(importedHabits)
-      .select("id"),
-    "Importing local habits"
-  );
-  if (habitsError) {
-    setAuthMessage(`Imported local data failed: ${habitsError.message}`);
+  let createdHabits;
+  try {
+    createdHabits = await apiFetch("/rest/v1/habits", {
+      method: "POST",
+      headers: {
+        Prefer: "return=representation"
+      },
+      body: importedHabits,
+      query: {
+        select: "id"
+      }
+    });
+  } catch (error) {
+    setAuthMessage(`Imported local data failed: ${error.message}`);
     return;
   }
 
@@ -367,12 +465,13 @@ async function importLocalHabitsIfNeeded() {
   });
 
   if (logRows.length > 0) {
-    const { error: logsError } = await withTimeout(
-      state.supabase.from("habit_logs").insert(logRows),
-      "Importing local logs"
-    );
-    if (logsError) {
-      setAuthMessage(`Imported local logs failed: ${logsError.message}`);
+    try {
+      await apiFetch("/rest/v1/habit_logs", {
+        method: "POST",
+        body: logRows
+      });
+    } catch (error) {
+      setAuthMessage(`Imported local logs failed: ${error.message}`);
       return;
     }
   }
@@ -480,10 +579,10 @@ async function handleHabitSubmit(event) {
       );
       if (!shouldContinue) return;
 
-      const { error: updateError } = await withTimeout(
-        state.supabase
-          .from("habits")
-          .update({
+      try {
+        await apiFetch("/rest/v1/habits", {
+          method: "PATCH",
+          body: {
             name: habitData.name,
             emoji: habitData.emoji,
             description: habitData.description,
@@ -491,24 +590,25 @@ async function handleHabitSubmit(event) {
             comparison_mode: habitData.comparisonMode,
             metric: habitData.metric,
             target: habitData.target
-          })
-          .eq("id", habit.id),
-        "Saving habit changes"
-      );
-      if (updateError) {
-        setAuthMessage(updateError.message, "error");
+          },
+          query: {
+            id: `eq.${habit.id}`
+          }
+        });
+      } catch (error) {
+        setAuthMessage(error.message, "error");
         return;
       }
 
-      const { error: deleteLogsError } = await withTimeout(
-        state.supabase
-          .from("habit_logs")
-          .delete()
-          .eq("habit_id", habit.id),
-        "Clearing habit history"
-      );
-      if (deleteLogsError) {
-        setAuthMessage(deleteLogsError.message, "error");
+      try {
+        await apiFetch("/rest/v1/habit_logs", {
+          method: "DELETE",
+          query: {
+            habit_id: `eq.${habit.id}`
+          }
+        });
+      } catch (error) {
+        setAuthMessage(error.message, "error");
         return;
       }
 
@@ -516,10 +616,14 @@ async function handleHabitSubmit(event) {
       uiState.selectedHabitId = habit.id;
       resetHabitForm();
     } else {
-      const { data, error } = await withTimeout(
-        state.supabase
-          .from("habits")
-          .insert({
+      let data;
+      try {
+        [data] = await apiFetch("/rest/v1/habits", {
+          method: "POST",
+          headers: {
+            Prefer: "return=representation"
+          },
+          body: {
             user_id: state.user.id,
             name: habitData.name,
             emoji: habitData.emoji,
@@ -528,12 +632,12 @@ async function handleHabitSubmit(event) {
             comparison_mode: habitData.comparisonMode,
             metric: habitData.metric,
             target: habitData.target
-          })
-          .select("id, created_at")
-          .single(),
-        "Creating habit"
-      );
-      if (error) {
+          },
+          query: {
+            select: "id,created_at"
+          }
+        });
+      } catch (error) {
         setAuthMessage(error.message, "error");
         return;
       }
@@ -586,28 +690,33 @@ async function handleLogSubmit(event) {
     setAuthMessage("");
 
     if (count === 0) {
-      const { error } = await withTimeout(
-        state.supabase
-          .from("habit_logs")
-          .delete()
-          .eq("habit_id", habit.id)
-          .eq("date", date),
-        "Clearing log"
-      );
-      if (error) {
+      try {
+        await apiFetch("/rest/v1/habit_logs", {
+          method: "DELETE",
+          query: {
+            habit_id: `eq.${habit.id}`,
+            date: `eq.${date}`
+          }
+        });
+      } catch (error) {
         setAuthMessage(error.message, "error");
         return;
       }
 
       delete habit.logs[date];
     } else {
-      const { error } = await withTimeout(
-        state.supabase
-          .from("habit_logs")
-          .upsert([{ user_id: state.user.id, habit_id: habit.id, date, count }], { onConflict: "habit_id,date" }),
-        "Saving log"
-      );
-      if (error) {
+      try {
+        await apiFetch("/rest/v1/habit_logs", {
+          method: "POST",
+          headers: {
+            Prefer: "resolution=merge-duplicates"
+          },
+          body: [{ user_id: state.user.id, habit_id: habit.id, date, count }],
+          query: {
+            on_conflict: "habit_id,date"
+          }
+        });
+      } catch (error) {
         setAuthMessage(error.message, "error");
         return;
       }
@@ -629,11 +738,14 @@ async function deleteHabit(habitId) {
   try {
     setBusy(true);
     setAuthMessage("");
-    const { error } = await withTimeout(
-      state.supabase.from("habits").delete().eq("id", habitId),
-      "Deleting habit"
-    );
-    if (error) {
+    try {
+      await apiFetch("/rest/v1/habits", {
+        method: "DELETE",
+        query: {
+          id: `eq.${habitId}`
+        }
+      });
+    } catch (error) {
       setAuthMessage(error.message, "error");
       return;
     }
