@@ -403,6 +403,12 @@ textarea {
   border-color: rgba(165, 75, 60, 0.28);
 }
 
+.tile-status-pending,
+.history-tile-status-pending {
+  background: transparent;
+  border-color: rgba(90, 70, 46, 0.12);
+}
+
 .weekly-year-board {
   display: grid;
   gap: 18px;

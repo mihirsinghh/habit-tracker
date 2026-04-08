@@ -1154,9 +1154,18 @@ function getHabitStats(habit) {
 
   let currentStreak = 0;
   let cursor = today;
-  while (cursor >= startDate && isDayComplete(habit, formatDateKey(cursor))) {
-    currentStreak += 1;
-    cursor = addDays(cursor, -1);
+  while (cursor >= startDate) {
+    const status = getCompletionState(habit, formatDateKey(cursor)).status;
+    if (status === "success") {
+      currentStreak += 1;
+      cursor = addDays(cursor, -1);
+      continue;
+    }
+    if (status === "pending") {
+      cursor = addDays(cursor, -1);
+      continue;
+    }
+    break;
   }
 
   let bestStreak = 0;
@@ -1455,24 +1464,9 @@ function getCompletionState(habit, dateKey) {
   }
 
   if (isUpperBound) {
-    if (date.getTime() === today.getTime()) {
-      if (count > habit.target) {
-        return {
-          level: 0,
-          status: "fail",
-          statusLabel: "Missed"
-        };
-      }
-      return {
-        level: count === 0 ? 1 : 2,
-        status: "pending",
-        statusLabel: "In progress"
-      };
-    }
-
     if (count <= habit.target) {
       return {
-        level: count === 0 ? 2 : 4,
+        level: 4,
         status: "success",
         statusLabel: "Successful"
       };
@@ -1486,18 +1480,16 @@ function getCompletionState(habit, dateKey) {
   }
 
   if (count >= habit.target) {
-    const ratio = Math.min(count / habit.target, 2);
     return {
-      level: getTileLevel(ratio),
+      level: 4,
       status: "success",
       statusLabel: "Successful"
     };
   }
 
   if (date.getTime() === today.getTime()) {
-    const ratio = Math.min(count / habit.target, 2);
     return {
-      level: getTileLevel(ratio),
+      level: 0,
       status: "pending",
       statusLabel: "In progress"
     };
