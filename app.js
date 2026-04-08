@@ -1,5 +1,6 @@
 const STORAGE_KEY = "habit-tracker-data-v1";
 const TILE_DAYS = 42;
+const WEEKLY_CARD_WEEKS = 4;
 const HISTORY_DAY_LABELS = [
   { label: "Mon", row: 1 },
   { label: "Wed", row: 3 },
@@ -664,7 +665,6 @@ function renderDashboard() {
             <h3>${escapeHtml(habit.emoji)} ${escapeHtml(habit.name)}</h3>
             <div class="dashboard-subhead">
               <p class="eyebrow">${formatFrequency(habit)}</p>
-              ${habit.frequency === "weekly" ? '<span class="weekly-badge">Weekly habit</span>' : ""}
             </div>
           </div>
           <div class="dashboard-card-actions">
@@ -676,7 +676,7 @@ function renderDashboard() {
         ${progressMarkup}
 
         <div class="tile-legend">
-          <span>${habit.frequency === "weekly" ? "Weekly habits are judged Sunday through Saturday." : isSelected ? "Click again to close the yearly view." : "Click this card to open the yearly view."}</span>
+          <span>${isSelected ? "Click again to close the yearly view." : "Click this card to open the yearly view."}</span>
           <span class="streak-pill">${stats.currentStreak} ${habit.frequency === "weekly" ? "week" : "day"} streak</span>
         </div>
 
@@ -742,7 +742,6 @@ function renderHabitHistory() {
             <div>
               <h3>${selectedStats.completedDays} successful weeks in ${selectedYear}</h3>
               <p>${escapeHtml(habit.emoji)} ${escapeHtml(habit.name)} tracked as ${formatFrequency(habit)}.</p>
-              <span class="weekly-badge">Weekly scoring mode</span>
             </div>
             <div class="history-stat-chips">
               <span class="meta-chip">${selectedStats.loggedDays} active weeks</span>
@@ -998,7 +997,7 @@ function buildRecentTiles(habit) {
 
 function buildRecentWeeklyTiles(habit) {
   const currentWeekStart = getWeekStart(new Date());
-  const totalWeeks = Math.ceil(TILE_DAYS / 7);
+  const totalWeeks = WEEKLY_CARD_WEEKS;
   return Array.from({ length: totalWeeks }, (_, index) => addDays(currentWeekStart, -7 * (totalWeeks - index - 1)))
     .map((weekStart) => {
       const summary = getWeekSummary(habit, weekStart);
