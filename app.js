@@ -22,6 +22,7 @@ const uiState = {
   selectedHabitId: null,
   selectedYear: null
 };
+let supabaseInitPromise = null;
 
 const elements = {
   authEmail: document.querySelector("#auth-email"),
@@ -65,8 +66,15 @@ async function initialize() {
   elements.logDate.addEventListener("change", renderLogSummary);
 
   render();
-  await setupSupabase();
-  render();
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(() => {
+      ensureSupabaseReady();
+    }, { timeout: 1200 });
+  } else {
+    window.setTimeout(() => {
+      ensureSupabaseReady();
+    }, 0);
+  }
 }
 
 async function withTimeout(promise, label, timeoutMs = REQUEST_TIMEOUT_MS) {
@@ -91,6 +99,18 @@ async function loadSupabaseModule() {
   } catch (_primaryError) {
     return import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm");
   }
+}
+
+function ensureSupabaseReady() {
+  if (state.supabase || supabaseInitPromise) {
+    return supabaseInitPromise ?? Promise.resolve();
+  }
+
+  supabaseInitPromise = setupSupabase().finally(() => {
+    supabaseInitPromise = null;
+    render();
+  });
+  return supabaseInitPromise;
 }
 
 function registerServiceWorker() {
@@ -143,8 +163,12 @@ function applySession(session) {
 async function handleSignIn(event) {
   event.preventDefault();
   if (!state.supabase) {
-    setAuthMessage(state.configured ? "Still connecting to sync. Please try again in a moment." : "Sync is not available right now.", "error");
-    return;
+    setAuthMessage("Connecting to sync...", "info");
+    await ensureSupabaseReady();
+    if (!state.supabase) {
+      setAuthMessage(state.configured ? "Still connecting to sync. Please try again in a moment." : "Sync is not available right now.", "error");
+      return;
+    }
   }
 
   try {
@@ -173,8 +197,12 @@ async function handleSignIn(event) {
 
 async function handleSignUp() {
   if (!state.supabase) {
-    setAuthMessage(state.configured ? "Still connecting to sync. Please try again in a moment." : "Sync is not available right now.", "error");
-    return;
+    setAuthMessage("Connecting to sync...", "info");
+    await ensureSupabaseReady();
+    if (!state.supabase) {
+      setAuthMessage(state.configured ? "Still connecting to sync. Please try again in a moment." : "Sync is not available right now.", "error");
+      return;
+    }
   }
 
   try {
@@ -420,7 +448,14 @@ function syncSelection() {
 async function handleHabitSubmit(event) {
   event.preventDefault();
   if (!state.supabase || !state.user) {
-    setAuthMessage("Sign in before adding habits.", "error");
+    if (!state.supabase && state.configured) {
+      setAuthMessage("Connecting to sync...", "info");
+      await ensureSupabaseReady();
+    }
+    if (!state.supabase || !state.user) {
+      setAuthMessage("Sign in before adding habits.", "error");
+      return;
+    }
     return;
   }
 
@@ -536,8 +571,14 @@ async function handleHabitSubmit(event) {
 async function handleLogSubmit(event) {
   event.preventDefault();
   if (!state.supabase || !state.user) {
-    setAuthMessage("Sign in before logging activity.", "error");
-    return;
+    if (!state.supabase && state.configured) {
+      setAuthMessage("Connecting to sync...", "info");
+      await ensureSupabaseReady();
+    }
+    if (!state.supabase || !state.user) {
+      setAuthMessage("Sign in before logging activity.", "error");
+      return;
+    }
   }
 
   try {
