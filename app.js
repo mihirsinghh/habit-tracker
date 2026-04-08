@@ -1150,10 +1150,11 @@ function getHabitStats(habit) {
   const dates = Object.keys(habit.logs).sort();
   const today = stripTime(new Date());
   const last42Days = getDateRange(TILE_DAYS);
+  const startDate = getHabitStartDate(habit);
 
   let currentStreak = 0;
   let cursor = today;
-  while (isDayComplete(habit, formatDateKey(cursor))) {
+  while (cursor >= startDate && isDayComplete(habit, formatDateKey(cursor))) {
     currentStreak += 1;
     cursor = addDays(cursor, -1);
   }
@@ -1479,6 +1480,11 @@ function getCompletionRatio(habit, date) {
 }
 
 function isDayComplete(habit, date) {
+  const dateValue = stripTime(new Date(`${date}T00:00:00`));
+  if (dateValue < getHabitStartDate(habit)) {
+    return false;
+  }
+
   if (habit.frequency === "weekly") {
     const weekDates = getWeekDates(date);
     const weeklyCount = weekDates.reduce((sum, currentDate) => sum + (habit.logs[currentDate] || 0), 0);
@@ -1503,6 +1509,17 @@ function getWeekDates(dateKey) {
 
 function getDateRange(totalDays) {
   return Array.from({ length: totalDays }, (_, index) => formatDateKey(addDays(new Date(), -(totalDays - index - 1))));
+}
+
+function getHabitStartDate(habit) {
+  const firstLogDate = Object.keys(habit.logs).sort()[0];
+  if (habit.createdAt) {
+    return stripTime(new Date(habit.createdAt));
+  }
+  if (firstLogDate) {
+    return stripTime(new Date(`${firstLogDate}T00:00:00`));
+  }
+  return stripTime(new Date());
 }
 
 function addDays(date, amount) {
