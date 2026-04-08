@@ -55,7 +55,7 @@ initialize();
 async function initialize() {
   elements.logDate.value = formatDateKey(new Date());
 
-  registerServiceWorker();
+  disableServiceWorkers();
   elements.authForm.addEventListener("submit", handleSignIn);
   elements.authSignUpBtn.addEventListener("click", handleSignUp);
   elements.authSignOutBtn.addEventListener("click", handleSignOut);
@@ -66,15 +66,6 @@ async function initialize() {
   elements.logDate.addEventListener("change", renderLogSummary);
 
   render();
-  if ("requestIdleCallback" in window) {
-    window.requestIdleCallback(() => {
-      ensureSupabaseReady();
-    }, { timeout: 1200 });
-  } else {
-    window.setTimeout(() => {
-      ensureSupabaseReady();
-    }, 0);
-  }
 }
 
 async function withTimeout(promise, label, timeoutMs = REQUEST_TIMEOUT_MS) {
@@ -113,13 +104,15 @@ function ensureSupabaseReady() {
   return supabaseInitPromise;
 }
 
-function registerServiceWorker() {
+function disableServiceWorkers() {
   if (!("serviceWorker" in navigator)) return;
 
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch((error) => {
-      console.warn("Unable to register service worker.", error);
-    });
+    navigator.serviceWorker.getRegistrations()
+      .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+      .catch((error) => {
+        console.warn("Unable to disable service workers.", error);
+      });
   });
 }
 
