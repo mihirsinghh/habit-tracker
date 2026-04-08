@@ -1579,11 +1579,11 @@ function getDateRange(totalDays) {
 
 function getHabitStartDate(habit) {
   const firstLogDate = Object.keys(habit.logs).sort()[0];
-  if (habit.createdAt) {
-    return stripTime(new Date(habit.createdAt));
-  }
   if (firstLogDate) {
     return stripTime(new Date(`${firstLogDate}T00:00:00`));
+  }
+  if (habit.createdAt) {
+    return stripTime(new Date(habit.createdAt));
   }
   return stripTime(new Date());
 }
