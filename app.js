@@ -1078,15 +1078,15 @@ function getBestWeeklyStreak(weeks) {
 function getWeekSummariesForYear(habit, year) {
   const yearStart = new Date(year, 0, 1);
   const yearEnd = new Date(year, 11, 31);
-  const firstWeekStart = getWeekStart(yearStart);
+  let firstWeekStart = getWeekStart(yearStart);
+  if (firstWeekStart < stripTime(yearStart)) {
+    firstWeekStart = addDays(firstWeekStart, 7);
+  }
   const lastWeekStart = getWeekStart(yearEnd);
   const weeks = [];
 
   for (let cursor = firstWeekStart; cursor <= lastWeekStart; cursor = addDays(cursor, 7)) {
-    const summary = getWeekSummary(habit, cursor);
-    if (summary.end.getFullYear() === year || summary.start.getFullYear() === year) {
-      weeks.push(summary);
-    }
+    weeks.push(getWeekSummary(habit, cursor));
   }
 
   return weeks;
