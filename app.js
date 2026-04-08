@@ -188,7 +188,7 @@ async function refreshHabits() {
 
   const { data: habitsData, error: habitsError } = await state.supabase
     .from("habits")
-    .select("id,name,emoji,description,frequency,metric,target,created_at")
+    .select("id,name,emoji,description,frequency,comparison_mode,metric,target,created_at")
     .order("created_at", { ascending: false });
   if (habitsError) {
     setAuthMessage(habitsError.message);
@@ -216,6 +216,7 @@ async function refreshHabits() {
     emoji: habit.emoji,
     description: habit.description,
     frequency: habit.frequency,
+    comparisonMode: habit.comparison_mode || "at_least",
     metric: habit.metric,
     target: habit.target,
     createdAt: habit.created_at,
@@ -236,6 +237,7 @@ function startEditingHabit(habitId) {
   document.querySelector("#habit-description").value = habit.description;
   document.querySelector("#habit-frequency").value = habit.frequency;
   document.querySelector("#habit-target").value = habit.target;
+  document.querySelector("#habit-comparison").value = habit.comparisonMode || "at_least";
   document.querySelector("#habit-metric").value = readableMetricUnit(habit.metric);
   renderHabitFormState();
   elements.habitForm.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -253,6 +255,7 @@ async function importLocalHabitsIfNeeded() {
     emoji: habit.emoji,
     description: habit.description,
     frequency: habit.frequency,
+    comparison_mode: habit.comparisonMode || "at_least",
     metric: sanitizeMetric(habit.metric),
     target: habit.target,
     created_at: habit.createdAt ?? new Date().toISOString()
@@ -309,6 +312,7 @@ function resetHabitForm() {
   uiState.editingHabitId = null;
   elements.habitForm.reset();
   document.querySelector("#habit-target").value = 1;
+  document.querySelector("#habit-comparison").value = "at_least";
   document.querySelector("#habit-metric").value = "times";
   renderHabitFormState();
 }
@@ -362,6 +366,7 @@ async function handleHabitSubmit(event) {
       emoji: String(formData.get("emoji")).trim() || "\u2728",
       description: String(formData.get("description")).trim(),
       frequency: String(formData.get("frequency")),
+      comparisonMode: String(formData.get("comparisonMode") || "at_least"),
       metric: sanitizeMetric(formData.get("metric")),
       target: clampNumber(Number(formData.get("target")), 1, 31)
     };
@@ -384,7 +389,15 @@ async function handleHabitSubmit(event) {
 
       const { error: updateError } = await state.supabase
         .from("habits")
-        .update(habitData)
+        .update({
+          name: habitData.name,
+          emoji: habitData.emoji,
+          description: habitData.description,
+          frequency: habitData.frequency,
+          comparison_mode: habitData.comparisonMode,
+          metric: habitData.metric,
+          target: habitData.target
+        })
         .eq("id", habit.id);
       if (updateError) {
         setAuthMessage(updateError.message, "error");
@@ -408,7 +421,13 @@ async function handleHabitSubmit(event) {
         .from("habits")
         .insert({
           user_id: state.user.id,
-          ...habitData
+          name: habitData.name,
+          emoji: habitData.emoji,
+          description: habitData.description,
+          frequency: habitData.frequency,
+          comparison_mode: habitData.comparisonMode,
+          metric: habitData.metric,
+          target: habitData.target
         })
         .select("id, created_at")
         .single();
@@ -425,6 +444,7 @@ async function handleHabitSubmit(event) {
       });
       event.currentTarget.reset();
       document.querySelector("#habit-target").value = 1;
+      document.querySelector("#habit-comparison").value = "at_least";
       document.querySelector("#habit-metric").value = "times";
     }
 
@@ -631,7 +651,7 @@ function renderDashboard() {
           ${tiles
             .map(
               (tile) => `
-            <div class="tile level-${tile.level}" data-tooltip="${tile.tooltip}" aria-label="${tile.tooltip}"></div>
+            <div class="tile level-${tile.level} tile-status-${tile.status}" data-tooltip="${tile.tooltip}" aria-label="${tile.tooltip}"></div>
           `
             )
             .join("")}
@@ -814,7 +834,7 @@ function renderHabitHistory() {
                   ${week.days
                     .map(
                       (day) => `
-                    <div class="history-tile level-${day.level} ${day.inYear ? "" : "history-tile-outside"}" data-tooltip="${day.tooltip}" aria-label="${day.tooltip}"></div>
+                    <div class="history-tile level-${day.level} history-tile-status-${day.status} ${day.inYear ? "" : "history-tile-outside"}" data-tooltip="${day.tooltip}" aria-label="${day.tooltip}"></div>
                   `
                     )
                     .join("")}
@@ -967,11 +987,11 @@ function buildRecentTiles(habit) {
 
   return getDateRange(TILE_DAYS).map((date) => {
     const count = habit.logs[date] || 0;
-    const ratio = getCompletionRatio(habit, date);
-    const level = getTileLevel(ratio);
+    const completion = getCompletionState(habit, count);
     return {
-      level,
-      tooltip: `${formatDateLong(date)}: ${count} / ${habit.target} ${readableMetricUnit(habit.metric)}`
+      level: completion.level,
+      status: completion.status,
+      tooltip: `${formatDateLong(date)}: ${count} / ${habit.target} ${readableMetricUnit(habit.metric)} (${completion.statusLabel})`
     };
   });
 }
@@ -1079,11 +1099,12 @@ function getWeekSummary(habit, weekStart) {
   const dates = Array.from({ length: 7 }, (_, index) => formatDateKey(addDays(start, index)));
   const count = dates.reduce((sum, date) => sum + (habit.logs[date] || 0), 0);
   const completeWindow = end <= today;
+  const success = isCountSuccessful(habit, count);
 
   let status = "pending";
   if (completeWindow) {
-    status = count >= habit.target ? "success" : "fail";
-  } else if (count >= habit.target) {
+    status = success ? "success" : "fail";
+  } else if (success) {
     status = "success";
   }
 
@@ -1113,15 +1134,16 @@ function buildYearlyHistory(habit, year) {
   for (let cursor = start; cursor <= end; cursor = addDays(cursor, 1)) {
     const dateKey = formatDateKey(cursor);
     const inYear = cursor.getFullYear() === year;
-    const count = habit.logs[dateKey] || 0;
-    const ratio = inYear ? getCompletionRatio(habit, dateKey) : 0;
-    days.push({
-      dateKey,
-      inYear,
-      level: inYear ? getTileLevel(ratio) : 0,
-      tooltip: `${formatDateLong(dateKey)}: ${count} / ${habit.target} ${readableMetricUnit(habit.metric)}${inYear && isDayComplete(habit, dateKey) ? " complete" : ""}`
-    });
-  }
+      const count = habit.logs[dateKey] || 0;
+      const completion = inYear ? getCompletionState(habit, count) : { level: 0, status: "pending", statusLabel: "Outside year" };
+      days.push({
+        dateKey,
+        inYear,
+        level: inYear ? completion.level : 0,
+        status: inYear ? completion.status : "pending",
+        tooltip: `${formatDateLong(dateKey)}: ${count} / ${habit.target} ${readableMetricUnit(habit.metric)} (${completion.statusLabel})`
+      });
+    }
 
   const weeks = [];
   for (let index = 0; index < days.length; index += 7) {
@@ -1155,6 +1177,31 @@ function getTileLevel(ratio) {
   if (ratio < 1) return 2;
   if (ratio < 1.5) return 3;
   return 4;
+}
+
+function getCompletionState(habit, count) {
+  if ((habit.comparisonMode || "at_least") === "at_most") {
+    if (count <= habit.target) {
+      return {
+        level: count === 0 ? 2 : 4,
+        status: "success",
+        statusLabel: "Successful"
+      };
+    }
+
+    return {
+      level: 0,
+      status: "fail",
+      statusLabel: "Missed"
+    };
+  }
+
+  const ratio = Math.min(count / habit.target, 2);
+  return {
+    level: getTileLevel(ratio),
+    status: count >= habit.target ? "success" : "pending",
+    statusLabel: count >= habit.target ? "Successful" : "In progress"
+  };
 }
 
 function getAvailableYears(habit) {
@@ -1195,10 +1242,16 @@ function isDayComplete(habit, date) {
   if (habit.frequency === "weekly") {
     const weekDates = getWeekDates(date);
     const weeklyCount = weekDates.reduce((sum, currentDate) => sum + (habit.logs[currentDate] || 0), 0);
-    return weeklyCount >= habit.target;
+    return isCountSuccessful(habit, weeklyCount);
   }
 
-  return (habit.logs[date] || 0) >= habit.target;
+  return isCountSuccessful(habit, habit.logs[date] || 0);
+}
+
+function isCountSuccessful(habit, count) {
+  return (habit.comparisonMode || "at_least") === "at_most"
+    ? count <= habit.target
+    : count >= habit.target;
 }
 
 function getWeekDates(dateKey) {
@@ -1246,13 +1299,14 @@ function formatDateShort(date) {
 
 function formatFrequency(habit) {
   const unit = readableMetricUnit(habit.metric);
+  const comparator = (habit.comparisonMode || "at_least") === "at_most" ? "at most" : "at least";
   if (habit.frequency === "daily") {
-    return `${habit.target} ${unit} daily`;
+    return `${comparator} ${habit.target} ${unit} daily`;
   }
   if (habit.frequency === "weekly") {
-    return `${habit.target} ${unit} weekly`;
+    return `${comparator} ${habit.target} ${unit} weekly`;
   }
-  return `${habit.target} ${unit} custom`;
+  return `${comparator} ${habit.target} ${unit} custom`;
 }
 
 function readableMetricUnit(metric) {

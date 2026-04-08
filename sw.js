@@ -1,4 +1,4 @@
-const CACHE_NAME = "habit-tracker-v3";
+const CACHE_NAME = "habit-tracker-v4";
 const APP_ASSETS = [
   "./",
   "./index.html",
@@ -32,18 +32,24 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const requestUrl = new URL(event.request.url);
+  const isLocalAsset = requestUrl.origin === self.location.origin;
 
-  if (event.request.mode === "navigate") {
+  if (event.request.mode === "navigate" || isLocalAsset) {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
           const responseClone = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
-            cache.put("./index.html", responseClone);
+            cache.put(event.request, responseClone);
           });
           return response;
         })
-        .catch(() => caches.match("./index.html"))
+        .catch(async () => {
+          const cached = await caches.match(event.request);
+          if (cached) return cached;
+          return caches.match("./index.html");
+        })
     );
     return;
   }

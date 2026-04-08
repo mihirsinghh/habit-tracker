@@ -7,6 +7,7 @@ create table if not exists public.habits (
   emoji text not null default '✨',
   description text not null default '',
   frequency text not null default 'daily',
+  comparison_mode text not null default 'at_least',
   metric text not null default 'times',
   target integer not null check (target > 0),
   created_at timestamptz not null default timezone('utc', now())

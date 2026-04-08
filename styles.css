@@ -378,6 +378,12 @@ textarea {
 .level-3 { background: var(--green-3); }
 .level-4 { background: var(--green-4); }
 
+.tile-status-fail,
+.history-tile-status-fail {
+  background: linear-gradient(180deg, #d17b63, #a54b3c);
+  border-color: rgba(165, 75, 60, 0.28);
+}
+
 .weekly-year-board {
   display: grid;
   gap: 18px;
